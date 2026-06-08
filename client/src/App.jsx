@@ -609,7 +609,7 @@ export default function App() {
     setSession(null);
     setUser(null);
     setAuthMode("LOGIN");
-    setShowLocalSignUp(false);
+    setShowSignUpPopup(false);
     setLocalAuthError("");
     setLocalAuthSuccess("");
   };
@@ -1086,8 +1086,8 @@ export default function App() {
               </svg>
             </div>
           </div>
-          <h1 className="intro-title" style={{ fontFamily: "'Share Tech Mono', monospace" }}>WORLD CUP DRAFT</h1>
-          <h2 className="intro-subtitle" style={{ fontFamily: "'Share Tech Mono', monospace" }}>7-STEP TROPHY RUN</h2>
+          <h1 className="intro-title">WORLD CUP DRAFT</h1>
+          <h2 className="intro-subtitle">7-STEP TROPHY RUN</h2>
           <div className="intro-loading-text">BOOTING RETRO SYSTEM...</div>
           <button className="intro-skip-btn" onClick={() => setIntroState('done')}>
             SKIP INTRO
@@ -1100,8 +1100,17 @@ export default function App() {
   // Render Auth screen if not logged in
   if (!user) {
     return (
-      <div className="landing-wrapper" style={{ padding: '40px 20px', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
-        <div className="dashboard-panel max-w-md" style={{ width: '100%', margin: 'auto' }}>
+      <div className="landing-wrapper" style={{ padding: '40px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', gap: '24px' }}>
+        <div className="text-center">
+          <div className="flex justify-center mb-2">
+            <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
+          </div>
+          <h1 className="logo-heading" style={{ fontSize: '2.4rem' }}>WORLD CUP DRAFT</h1>
+          <h2 className="sub-heading" style={{ fontSize: '0.85rem', letterSpacing: '3px' }}>7-Step Trophy Run</h2>
+          <p className="text-xs" style={{ color: 'var(--color-text-dim)', marginTop: '6px', fontWeight: 800 }}>FIFA 2026 EDITION</p>
+        </div>
+
+        <div className="dashboard-panel max-w-md" style={{ width: '100%', margin: '0' }}>
           {localAuthError && (
             <div className="alert-box alert-box-red text-xs mb-4 text-center">
               {localAuthError}
@@ -1212,20 +1221,19 @@ export default function App() {
   // Render Landing Page
   if (!room) {
     return (
-      <div className="landing-wrapper">
+      <div className="landing-wrapper" style={{ flexDirection: 'column', gap: '12px' }}>
+        {user && (
+          <div className="flex justify-between items-center" style={{ width: '100%', maxWidth: '480px', fontSize: '0.75rem', fontFamily: "'Share Tech Mono', monospace", padding: '0 8px' }}>
+            <span style={{ color: 'var(--color-text-dim)' }}>Logged in as: <b style={{ color: '#ffffff' }}>{user.email}</b></span>
+            <button 
+              onClick={handleLogOut} 
+              className="landing-signout-btn"
+            >
+              <LogOut size={12} /> Sign Out
+            </button>
+          </div>
+        )}
         <div className="dashboard-panel max-w-md">
-          {user && (
-            <div className="flex justify-between items-center p-2 rounded-lg mb-4" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(46, 204, 113, 0.15)', fontSize: '0.75rem' }}>
-              <span style={{ color: 'var(--color-text-dim)' }}>Logged in as: <b>{user.email}</b></span>
-              <button 
-                onClick={handleLogOut} 
-                className="btn-sports-secondary" 
-                style={{ padding: '4px 8px', fontSize: '0.65rem' }}
-              >
-                <LogOut size={12} style={{ marginRight: '4px' }} /> Sign Out
-              </button>
-            </div>
-          )}
           <div className="text-center mb-6">
             <div className="flex justify-center mb-2">
               <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
@@ -1289,8 +1297,7 @@ export default function App() {
                   <button 
                     onClick={handleJoinRoom}
                     disabled={!playerName || !roomId}
-                    className="btn-sports-secondary"
-                    style={{ position: 'absolute', right: '2px', top: '2px', padding: '10px', border: 'none', background: 'transparent' }}
+                    className="lobby-arrow-btn"
                   >
                     <ArrowRight size={18} />
                   </button>
@@ -1326,13 +1333,31 @@ export default function App() {
             </h3>
             <div className="space-y-3">
               {room.players.map((p, idx) => (
-                <div key={idx} className="flex justify-between items-center p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(46, 204, 113, 0.15)' }}>
-                  <div className="flex items-center gap-2">
-                    <User size={16} />
-                    <span className="font-semibold">{p.name} {p.teamName ? `(${p.teamName})` : ''}</span>
-                    {p.isHost && <span className="text-[10px] bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded border border-amber-500/20" style={{ marginLeft: '8px' }}>Host</span>}
+                <div key={idx} className="lobby-manager-card">
+                  <div className="lobby-manager-info">
+                    <div className="lobby-manager-avatar">
+                      <User size={20} />
+                    </div>
+                    <div className="lobby-manager-details">
+                      <div className="lobby-manager-name-row">
+                        <span className="lobby-manager-name">{p.name}</span>
+                        {p.teamName && (
+                          <span className="lobby-manager-team">[{p.teamName}]</span>
+                        )}
+                        {p.isHost && (
+                          <span className="lobby-manager-host-badge">HOST</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <span className="text-xs" style={{ color: 'var(--color-text-dim)' }}>{p.formation} • {p.tactic}</span>
+                  <div className="lobby-manager-setup-col">
+                    <span className="lobby-manager-formation">
+                      {p.formation}
+                    </span>
+                    <span className="lobby-manager-tactic">
+                      {p.tactic}
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1471,9 +1496,9 @@ export default function App() {
               {/* Step instructions */}
               <div className="alert-box alert-box-amber text-xs font-semibold">
                 {selectedCard ? (
-                  <span>👉 <b>STEP 2:</b> Click a flashing node on the pitch map or substitute bench to assign <b>{selectedCard.name}</b>.</span>
+                  <span>» <b>STEP 2:</b> Click a flashing node on the pitch map or substitute bench to assign <b>{selectedCard.name}</b>.</span>
                 ) : (
-                  <span>👉 <b>STEP 1:</b> Select a player from the roster list below, or draft the team manager if available.</span>
+                  <span>» <b>STEP 1:</b> Select a player from the roster list below, or draft the team manager if available.</span>
                 )}
               </div>
 
@@ -1521,9 +1546,9 @@ export default function App() {
                 <div className="draft-subhead" style={{ justifyContent: 'center' }}>
                   <span className="draft-instruct">
                     {selectedCard ? (
-                      <span>👉 <b>STEP 2:</b> Click a flashing node on the pitch map to assign <b>{selectedCard.name}</b>.</span>
+                      <span>» <b>STEP 2:</b> Click a flashing node on the pitch map to assign <b>{selectedCard.name}</b>.</span>
                     ) : (
-                      <span>👉 <b>STEP 1:</b> Click a player card below to select them.</span>
+                      <span>» <b>STEP 1:</b> Click a player card below to select them.</span>
                     )}
                   </span>
                 </div>
