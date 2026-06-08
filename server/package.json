@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node src/server.js"
+    "dev": "node src/server.js",
+    "db:seed": "node src/db/migrate_players.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.107.0",
