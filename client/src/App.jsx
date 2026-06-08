@@ -46,9 +46,9 @@ const WorldCupTrophy = ({ size = 24, className = "", style = {}, ...props }) => 
   );
 };
 
-const SOCKET_URL = window.location.hostname === 'localhost' 
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || (window.location.hostname === 'localhost' 
   ? 'http://localhost:5000' 
-  : `http://${window.location.hostname}:5000`;
+  : `http://${window.location.hostname}:5000`);
 
 const TACTIC_DETAILS = {
   "tiki-taka": { name: "Tiki-Taka", desc: "Focuses on short passing, ball control, and positional play.", color: "#ffffff" },
