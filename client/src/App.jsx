@@ -1,12 +1,50 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { 
-  Trophy, Users, User, ArrowRight, Play, RotateCcw, 
+  Users, User, ArrowRight, Play, RotateCcw, 
   Settings, Shield, ChevronRight, CheckCircle2, AlertCircle, Sparkles, RefreshCw,
   LogOut, Calendar, Award, Eye, EyeOff
 } from 'lucide-react';
 import RetroDither from './RetroDither';
 import { supabase, isSupabaseConfigured } from './supabase.js';
+
+const WorldCupTrophy = ({ size = 24, className = "", style = {}, ...props }) => {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      fill="currentColor"
+      className={className}
+      style={{ display: 'inline-block', verticalAlign: 'middle', ...style }}
+      {...props}
+    >
+      {/* Globe at the top */}
+      <circle cx="32" cy="16" r="10" />
+      <path d="M26 13.5c3 1.5 6 2 10 0" fill="none" stroke="var(--bg-dark, #000)" strokeWidth="1.2" opacity="0.3" />
+      <path d="M24.5 17.5c4 2 8 2.5 13.5-.5" fill="none" stroke="var(--bg-dark, #000)" strokeWidth="1.2" opacity="0.3" />
+      <path d="M29 9c2 1 4 2 4 4.5S31 19.5 31.5 22" fill="none" stroke="var(--bg-dark, #000)" strokeWidth="1" opacity="0.25" />
+      
+      {/* Swirling figures supporting the globe */}
+      <path d="M22 50c.5-3.5 1.5-7.5 1.5-12.5s-2.5-9-4-11c-1-1.5-1.5-3 0-3.5s3.5.5 5 3.5c1.8 3.5 2.5 8 2 13.5s-1.5 10-1.5 10h-3z" />
+      <path d="M42 50c-.5-3.5-1.5-7.5-1.5-12.5s2.5-9 4-11c1-1.5 1.5-3 0-3.5s-3.5.5-5 3.5c-1.8 3.5-2.5 8-2 13.5s1.5 10 1.5 10h3z" />
+      
+      {/* Central rising core */}
+      <path d="M28 50c.5-5 2.5-10.5 4-16.5 .5-2 1.5-2 2 0 1.5 6 3.5 11.5 4 16.5h-10z" />
+      
+      {/* Ribbon extensions wrapping globe */}
+      <path d="M21 21.5c4-2 8.5-5 11-10c.5 1.5 1.5 3 2.5 3 2.5 0 4-2.5 6.5-5.5c-1.5 3-4 5-6.5 5-2 0-3.5-1.5-4.5-3.5-1.5 2.5-4.5 5-7.5 6.5c-1.2.6-1.5 4.5-1.5 4.5z" />
+
+      {/* Base: Stack of rings */}
+      <path d="M25 48h14v3H25z" />
+      <path d="M22 51h20v2H22z" fill="rgba(255,255,255,0.4)" />
+      <path d="M21 53h22v3H21z" />
+      <path d="M19 56h26v2H19z" fill="rgba(255,255,255,0.4)" />
+      <path d="M18 58h28v4H18z" />
+    </svg>
+  );
+};
 
 const SOCKET_URL = window.location.hostname === 'localhost' 
   ? 'http://localhost:5000' 
@@ -260,10 +298,11 @@ export default function App() {
   const [playerName, setPlayerName] = useState('');
   const [roomId, setRoomId] = useState('');
   const [isSinglePlayer, setIsSinglePlayer] = useState(false);
+  const [screenLoading, setScreenLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState('LOADING SYSTEM...');
 
   const [landingSubmenu, setLandingSubmenu] = useState("MAIN"); // MAIN, MULTIPLAYER_CHOOSE, LOCAL_LOBBY, GLOBAL_MATCHMAKING
   const [activeRooms, setActiveRooms] = useState([]);
-  const [showForfeitConfirm, setShowForfeitConfirm] = useState(false);
   const [globalLeaderboard, setGlobalLeaderboard] = useState([]);
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
   const playerNameRef = useRef('');
@@ -384,6 +423,9 @@ export default function App() {
   const [historicalRuns, setHistoricalRuns] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [expandedRunId, setExpandedRunId] = useState(null);
+
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [pendingExitAction, setPendingExitAction] = useState(null);
 
   // Supabase & Local Session Hooks
   useEffect(() => {
@@ -800,7 +842,16 @@ export default function App() {
     setSocket(s);
 
     s.on('room_update', (roomState) => {
-      setRoom(roomState);
+      setRoom(prevRoom => {
+        if (prevRoom && prevRoom.status === 'lobby' && roomState.status === 'drafting') {
+          setLoadingText('INITIALIZING DRAFT BOARD...');
+          setScreenLoading(true);
+          setTimeout(() => {
+            setScreenLoading(false);
+          }, 800);
+        }
+        return roomState;
+      });
       const lp = roomState.players.find(p => p.id === s.id);
       setLocalPlayer(lp);
 
@@ -862,6 +913,27 @@ export default function App() {
       s.disconnect();
     };
   }, []);
+
+  // Intercept back navigation when in room/game
+  useEffect(() => {
+    if (!room) return;
+
+    // Push dummy state to capture the popstate
+    window.history.pushState({ inRoom: true }, '');
+
+    const handlePopState = (event) => {
+      // Restore dummy state immediately to block navigation
+      window.history.pushState({ inRoom: true }, '');
+
+      setPendingExitAction(() => () => handleLeaveRoom());
+      setShowExitConfirm(true);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [room, socket]);
 
   // Live simulation ticker scroll
   useEffect(() => {
@@ -950,27 +1022,55 @@ export default function App() {
     eventListEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [visibleEvents]);
 
+  const handleLeaveRoom = () => {
+    if (socket) {
+      socket.disconnect();
+      socket.connect();
+    }
+    setRoom(null);
+    setDraftData(null);
+    setSimulationActive(false);
+    setSimDetails(null);
+    setSupabaseTournamentId(null);
+    setLandingSubmenu("MAIN");
+  };
+
   // Actions
   const handleCreateRoom = (e) => {
     e.preventDefault();
     if (!playerName) return;
+    setLoadingText('CREATING LOBBY...');
+    setScreenLoading(true);
     const rId = Math.random().toString(36).substring(2, 6).toUpperCase();
     setRoomId(rId);
-    socket.emit('join_room', { roomId: rId, playerName, isHost: true, isSinglePlayer: false });
+    setTimeout(() => {
+      socket.emit('join_room', { roomId: rId, playerName, isHost: true, isSinglePlayer: false });
+      setScreenLoading(false);
+    }, 600);
   };
 
   const handleJoinRoom = (e) => {
     e.preventDefault();
     if (!playerName || !roomId) return;
-    socket.emit('join_room', { roomId: roomId.toUpperCase(), playerName, isHost: false, isSinglePlayer: false });
+    setLoadingText('CONNECTING TO LOBBY...');
+    setScreenLoading(true);
+    setTimeout(() => {
+      socket.emit('join_room', { roomId: roomId.toUpperCase(), playerName, isHost: false, isSinglePlayer: false });
+      setScreenLoading(false);
+    }, 600);
   };
 
   const handleSinglePlayer = () => {
     if (!playerName) return;
+    setLoadingText('BOOTING CAMPAIGN...');
+    setScreenLoading(true);
     const rId = "SOLO-" + Math.random().toString(36).substring(2, 6).toUpperCase();
     setRoomId(rId);
     setIsSinglePlayer(true);
-    socket.emit('join_room', { roomId: rId, playerName, isHost: true, isSinglePlayer: true });
+    setTimeout(() => {
+      socket.emit('join_room', { roomId: rId, playerName, isHost: true, isSinglePlayer: true });
+      setScreenLoading(false);
+    }, 600);
   };
 
   const fetchGlobalLeaderboard = async () => {
@@ -1038,17 +1138,21 @@ export default function App() {
   };
 
   const handleExitClick = () => {
-    setShowForfeitConfirm(true);
+    const isMultiplayerActive = room && !room.isSinglePlayer && room.status !== 'finished' && room.status !== 'lobby';
+    if (isMultiplayerActive) {
+      setPendingExitAction(() => () => handleConfirmForfeit());
+    } else {
+      setPendingExitAction(() => () => handleLeaveRoom());
+    }
+    setShowExitConfirm(true);
   };
 
   const handleConfirmForfeit = () => {
-    setShowForfeitConfirm(false);
     if (room && socket) {
       socket.emit('forfeit_game', { roomId: room.roomId });
       socket.emit('leave_room', { roomId: room.roomId });
     }
-    setRoom(null);
-    setLandingSubmenu("MAIN");
+    handleLeaveRoom();
   };
 
   const handleUpdateSettings = (formation, tactic, teamName) => {
@@ -1081,6 +1185,7 @@ export default function App() {
 
   const isPlayerEligibleForDraft = (player) => {
     if (!localPlayer || !room) return false;
+    if (draftData?.manager) return false; // Enforce manager selection first
     
     // Check if there is a compatible empty slot on the starting XI
     const hasCompatiblePitchSlot = getPlayerPositions(localPlayer.formation).some((_, idx) => {
@@ -1097,6 +1202,7 @@ export default function App() {
 
   // Select player from draft roster card
   const handleSelectDraftPlayer = (player) => {
+    if (draftData?.manager) return; // Enforce manager selection first
     setSelectedCard(player);
   };
 
@@ -1186,12 +1292,77 @@ export default function App() {
     return running;
   };
 
+  const renderExitConfirmModal = () => {
+    if (!showExitConfirm) return null;
+    const isMultiplayerActive = room && !room.isSinglePlayer && room.status !== 'finished' && room.status !== 'lobby';
+    return (
+      <div className="retro-popup-overlay" style={{
+        position: 'fixed',
+        top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.85)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 99999,
+        padding: '20px'
+      }}>
+        <div className="exit-confirm-panel text-center" style={isMultiplayerActive ? { borderColor: '#c0392b' } : {}}>
+          <div className="flex justify-center" style={{ color: isMultiplayerActive ? '#c0392b' : '#ffffff' }}>
+            <AlertCircle size={36} />
+          </div>
+          <div className="space-y-1">
+            <h3 className="logo-heading" style={{ fontSize: '1.25rem', color: isMultiplayerActive ? '#c0392b' : 'inherit' }}>
+              {isMultiplayerActive ? 'FORFEIT MATCH?' : 'LEAVE GAME?'}
+            </h3>
+            <p className="text-xs" style={{ color: 'var(--color-text-dim)', lineHeight: '1.3' }}>
+              {isMultiplayerActive 
+                ? 'Leaving will result in an immediate 3-0 forfeit loss. Are you sure you want to exit?' 
+                : 'Are you sure you want to exit? All unsaved draft progress will be lost.'}
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <button 
+              onClick={() => {
+                setShowExitConfirm(false);
+                setPendingExitAction(null);
+              }}
+              className="btn-sports-secondary w-full"
+              style={{ fontSize: '0.72rem', padding: '8px', minWidth: '0' }}
+            >
+              Stay
+            </button>
+            <button 
+              onClick={() => {
+                if (pendingExitAction) {
+                  pendingExitAction();
+                }
+                setShowExitConfirm(false);
+                setPendingExitAction(null);
+              }}
+              className="btn-sports w-full"
+              style={{ 
+                fontSize: '0.72rem', 
+                padding: '8px', 
+                background: isMultiplayerActive ? '#c0392b' : '#ffffff', 
+                color: isMultiplayerActive ? '#ffffff' : '#000000', 
+                border: isMultiplayerActive ? '1px solid #c0392b' : '1px solid #ffffff',
+                minWidth: '0' 
+              }}
+            >
+              {isMultiplayerActive ? 'Forfeit & Exit' : 'Exit'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   if (introState !== 'done') {
     return (
       <div className={`intro-overlay ${introState === 'fading' ? 'fade-out' : ''}`}>
         <div className="intro-content">
           <div className="intro-logo-container">
-            <Trophy size={80} className="intro-trophy" />
+            <WorldCupTrophy size={80} className="intro-trophy" />
             <div className="intro-football-wrapper">
               <svg viewBox="0 0 64 64" width="48" height="48" className="intro-football">
                 <circle cx="32" cy="32" r="30" fill="#f0f0f0" stroke="#101010" strokeWidth="4" />
@@ -1207,9 +1378,6 @@ export default function App() {
           <h1 className="intro-title">WORLD CUP DRAFT</h1>
           <h2 className="intro-subtitle">7-STEP TROPHY RUN</h2>
           <div className="intro-loading-text">BOOTING RETRO SYSTEM...</div>
-          <button className="intro-skip-btn" onClick={() => setIntroState('done')}>
-            SKIP INTRO
-          </button>
         </div>
       </div>
     );
@@ -1218,10 +1386,11 @@ export default function App() {
   // Render Auth screen if not logged in
   if (!user) {
     return (
+      <>
       <div className="landing-wrapper" style={{ padding: '40px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', gap: '24px' }}>
         <div className="text-center">
           <div className="flex justify-center mb-2">
-            <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
+            <WorldCupTrophy size={46} style={{ color: 'var(--color-gold)' }} />
           </div>
           <h1 className="logo-heading" style={{ fontSize: '2.4rem' }}>WORLD CUP DRAFT</h1>
           <h2 className="sub-heading" style={{ fontSize: '0.85rem', letterSpacing: '3px' }}>7-Step Trophy Run</h2>
@@ -1333,12 +1502,22 @@ export default function App() {
           </div>
         )}
       </div>
+      {screenLoading && (
+        <div className="screen-transition-overlay">
+          <div className="screen-transition-content">
+            <div className="screen-transition-spinner"></div>
+            <div className="screen-transition-text">{loadingText}</div>
+          </div>
+        </div>
+      )}
+      </>
     );
   }
 
   // Render Landing Page
   if (!room) {
     return (
+      <>
       <div className="landing-wrapper" style={{ flexDirection: 'column', gap: '12px' }}>
         {user && (
           <div className="flex justify-between items-center" style={{ width: '100%', maxWidth: '480px', fontSize: '0.75rem', fontFamily: "'Share Tech Mono', monospace", padding: '0 8px' }}>
@@ -1354,7 +1533,7 @@ export default function App() {
         <div className="dashboard-panel max-w-md">
           <div className="text-center mb-6">
             <div className="flex justify-center mb-2">
-              <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
+              <WorldCupTrophy size={46} style={{ color: 'var(--color-gold)' }} />
             </div>
             <h1 className="logo-heading">WORLD CUP DRAFT</h1>
             <h2 className="sub-heading">7-Step Trophy Run</h2>
@@ -1374,14 +1553,14 @@ export default function App() {
 
           <div className="space-y-6">
             <div>
-              <label className="block text-xs uppercase font-bold mb-2" style={{ color: 'var(--color-green)' }}>Active Manager Profile</label>
+              <label className="block text-xs uppercase font-bold mb-2" style={{ color: '#ffffff' }}>Active Manager Profile</label>
               <input 
                 type="text" 
                 placeholder="Manager Name..." 
                 value={playerName} 
                 className="sports-input" 
                 disabled={true}
-                style={{ opacity: 0.8, cursor: 'not-allowed', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(46, 204, 113, 0.15)' }}
+                style={{ opacity: 0.8, cursor: 'not-allowed', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255, 255, 255, 0.15)' }}
               />
             </div>
 
@@ -1566,38 +1745,47 @@ export default function App() {
           </div>
         </div>
       </div>
+      {screenLoading && (
+        <div className="screen-transition-overlay">
+          <div className="screen-transition-content">
+            <div className="screen-transition-spinner"></div>
+            <div className="screen-transition-text">{loadingText}</div>
+          </div>
+        </div>
+      )}
+      </>
     );
   }
 
   // Render Lobby screen
   if (room.status === 'lobby') {
     return (
-      <div className="max-w-6xl p-6 lobby-grid">
-        <div className="dashboard-panel space-y-6">
-          <div className="flex justify-between items-center border-b pb-4">
-            <div>
-              <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Lobby Code</p>
-              <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>{room.roomId}</h2>
+      <>
+        <div className="max-w-6xl p-6 lobby-grid">
+          <div className="dashboard-panel space-y-6">
+            <div className="flex justify-between items-center border-b pb-4">
+              <div>
+                <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Lobby Code</p>
+                <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>{room.roomId}</h2>
+              </div>
+              <div className="flex gap-3 items-center">
+                {room.isSinglePlayer ? (
+                  <span className="alert-box text-xs" style={{ padding: '6px 12px' }}>CAMPAIGN (48-TEAM STAGE)</span>
+                ) : (
+                  <span className="alert-box alert-box-amber text-xs" style={{ padding: '6px 12px' }}>MULTIPLAYER DUEL</span>
+                )}
+                <button 
+                  onClick={() => {
+                    setPendingExitAction(() => () => handleLeaveRoom());
+                    setShowExitConfirm(true);
+                  }} 
+                  className="btn-sports-secondary" 
+                  style={{ padding: '6px 12px', fontSize: '0.7rem' }}
+                >
+                  Exit Lobby
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-3">
-              {room.isSinglePlayer ? (
-                <span className="alert-box text-xs" style={{ padding: '6px 12px' }}>CAMPAIGN (48-TEAM STAGE)</span>
-              ) : (
-                <span className="alert-box alert-box-amber text-xs" style={{ padding: '6px 12px' }}>MULTIPLAYER DUEL</span>
-              )}
-              <button 
-                onClick={() => {
-                  if (socket) socket.emit('leave_room', { roomId: room.roomId });
-                  setRoom(null);
-                  setLandingSubmenu("MAIN");
-                }}
-                className="btn-sports-secondary"
-                style={{ padding: '6px 12px', width: 'auto', fontSize: '0.75rem' }}
-              >
-                Leave Lobby
-              </button>
-            </div>
-          </div>
 
           <div className="space-y-4">
             <h3 className="text-sm uppercase font-bold flex items-center gap-2">
@@ -1678,11 +1866,11 @@ export default function App() {
                   </select>
                 </div>
               </div>
-              <div className="p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(46, 204, 113, 0.15)' }}>
-                <h4 className="text-xs uppercase font-bold mb-1" style={{ color: TACTIC_DETAILS[localPlayer.tactic]?.color }}>
+              <div className="tactic-info-card">
+                <h4 className="tactic-info-title">
                   {TACTIC_DETAILS[localPlayer.tactic]?.name}
                 </h4>
-                <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>{TACTIC_DETAILS[localPlayer.tactic]?.desc}</p>
+                <p className="tactic-info-desc">{TACTIC_DETAILS[localPlayer.tactic]?.desc}</p>
               </div>
             </div>
           )}
@@ -1725,35 +1913,38 @@ export default function App() {
           </div>
         </div>
       </div>
+      {renderExitConfirmModal()}
+      </>
     );
   }
 
   // Render Drafting Phase
   if (room.status === 'drafting') {
     return (
-      <div className="max-w-6xl p-6 draft-grid">
-        <div className="dashboard-panel space-y-6">
-          <div className="flex justify-between items-center border-b pb-4">
-            <div>
-              <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Draft Round {room.draftRound} of 15</p>
-              <div className="flex items-center gap-3">
+      <>
+        <div className="max-w-6xl p-6 draft-grid">
+          <div className="dashboard-panel space-y-6">
+            <div className="flex justify-between items-center border-b pb-4">
+              <div>
+                <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Draft Round {room.draftRound} of 15</p>
                 <h2 className="text-lg font-bold" style={{ margin: 0 }}>Draft Player or Manager</h2>
+              </div>
+              <div className="text-right flex items-center gap-4">
+                <div>
+                  <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Spun Nation</p>
+                  <p className="font-extrabold text-white text-md">
+                    {room.spunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
+                  </p>
+                </div>
                 <button 
                   onClick={handleExitClick}
-                  className="btn-sports"
-                  style={{ padding: '4px 10px', background: '#c0392b', color: '#fff', border: 'none', width: 'auto', fontSize: '0.7rem' }}
+                  className="btn-sports-secondary" 
+                  style={{ padding: '6px 12px', fontSize: '0.7rem' }}
                 >
-                  Leave Game
+                  Exit Game
                 </button>
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Spun Nation</p>
-              <p className="font-extrabold text-white text-md">
-                {room.spunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
-              </p>
-            </div>
-          </div>
 
           {!draftData ? (
             <div className="matrix-spinner-box">
@@ -1776,10 +1967,12 @@ export default function App() {
               
               {/* Step instructions */}
               <div className="alert-box alert-box-amber text-xs font-semibold">
-                {selectedCard ? (
+                {draftData.manager ? (
+                  <span>» <b>REQUIRED STEP:</b> You must draft the manager first to unlock player roster selection.</span>
+                ) : selectedCard ? (
                   <span>» <b>STEP 2:</b> Click a flashing node on the pitch map or substitute bench to assign <b>{selectedCard.name}</b>.</span>
                 ) : (
-                  <span>» <b>STEP 1:</b> Select a player from the roster list below, or draft the team manager if available.</span>
+                  <span>» <b>STEP 1:</b> Select a player from the roster list below.</span>
                 )}
               </div>
 
@@ -1826,7 +2019,9 @@ export default function App() {
                 
                 <div className="draft-subhead" style={{ justifyContent: 'center' }}>
                   <span className="draft-instruct">
-                    {selectedCard ? (
+                    {draftData.manager ? (
+                      <span style={{ color: 'var(--color-gold)' }}>» <b>DRAFT LOCK:</b> Manager selection required.</span>
+                    ) : selectedCard ? (
                       <span>» <b>STEP 2:</b> Click a flashing node on the pitch map to assign <b>{selectedCard.name}</b>.</span>
                     ) : (
                       <span>» <b>STEP 1:</b> Click a player card below to select them.</span>
@@ -1834,7 +2029,7 @@ export default function App() {
                   </span>
                 </div>
                 
-                <div className="player-list-grid">
+                <div className={`player-list-grid ${draftData.manager ? 'draft-locked' : ''}`}>
                   {draftData.choices
                     .filter(choice => choice.name.toLowerCase().includes(searchQuery.toLowerCase()))
                     .map((choice) => {
@@ -2013,51 +2208,9 @@ export default function App() {
             </div>
           )}
         </div>
-        {showForfeitConfirm && (
-          <div className="retro-popup-overlay" style={{
-            position: 'fixed',
-            top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0,0,0,0.85)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 99999999
-          }}>
-            <div className="dashboard-panel max-w-md" style={{
-              background: '#090909',
-              border: '3px double #ffffff',
-              padding: '30px',
-              textAlign: 'center',
-              boxShadow: '0 0 30px rgba(255,255,255,0.2)'
-            }}>
-              <AlertCircle size={48} style={{ color: '#c0392b', marginBottom: '16px', marginLeft: 'auto', marginRight: 'auto' }} />
-              <h3 style={{ fontFamily: "'Share Tech Mono', monospace", textTransform: 'uppercase', marginBottom: '12px', letterSpacing: '1px', color: '#c0392b' }}>
-                Forfeit Match?
-              </h3>
-              <p className="text-xs" style={{ color: '#cccccc', marginBottom: '24px', lineHeight: '1.6' }}>
-                Are you sure you want to exit? <br />
-                Leaving will result in an immediate <b>3-0 forfeit loss</b>.
-              </p>
-              <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-                <button 
-                  onClick={() => setShowForfeitConfirm(false)} 
-                  className="btn-sports-secondary"
-                  style={{ minWidth: '100px', fontSize: '0.8rem', padding: '10px 18px' }}
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={handleConfirmForfeit} 
-                  className="btn-sports"
-                  style={{ minWidth: '140px', fontSize: '0.8rem', padding: '10px 18px', background: '#c0392b', color: '#fff', border: 'none' }}
-                >
-                  Forfeit & Exit
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
+      {renderExitConfirmModal()}
+      </>
     );
   }
 
@@ -2084,74 +2237,71 @@ export default function App() {
     const groups = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
 
     return (
-      <div className="max-w-6xl p-6 space-y-8">
-        
-        {/* Header Campaign Banner */}
-        <div className="dashboard-panel flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '16px' }}>
-          <div>
-            <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>
-              {room.isSinglePlayer ? "FIFA World Cup Campaign 2026" : "Multiplayer Duel Arena"}
-            </p>
-            <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>
-              {hasFinished 
-                ? (wonCup ? "🏆 CHAMPION!" : "💀 DEFEATED") 
-                : (room.isSinglePlayer 
-                    ? `STAGE RUN: MATCH ${room.matchesPlayed + 1} OF 8` 
-                    : "CHALLENGE MATCH: 1-GAME FINAL")
-              }
-            </h2>
-            <p className="text-xs font-bold" style={{ color: 'var(--color-gold)', marginTop: '4px' }}>
-              {hasFinished ? (wonCup ? "YOU CLAIMED SUPREME GLORY!" : "YOU LOST THE DUEL") : (
-                room.isSinglePlayer ? (
-                  room.matchesPlayed < 3 
-                    ? `GROUP STAGE MATCH - GROUP A`
-                    : room.matchesPlayed === 3 ? "ROUND OF 32 (GAME 4)"
-                    : room.matchesPlayed === 4 ? "ROUND OF 16 (GAME 5)"
-                    : room.matchesPlayed === 5 ? "QUARTERFINAL (GAME 6)"
-                    : room.matchesPlayed === 6 ? "SEMIFINAL (GAME 7)" : "THE WORLD CUP FINAL (GAME 8)"
-                ) : "DEFEAT YOUR OPPONENT TO CLAIM BRAGGING RIGHTS!"
-              )}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className="flex gap-2">
-              {room.matchesHistory.map((h, idx) => {
-                const won = h.scoreA > h.scoreB;
-                const draw = h.scoreA === h.scoreB;
-                return (
-                  <div 
-                    key={idx} 
-                    className={`result-bubble ${won ? 'badge-win' : draw ? 'badge-draw' : 'badge-loss'}`}
-                  >
-                    {won ? 'W' : draw ? 'D' : 'L'}
-                  </div>
-                );
-              })}
+      <>
+        <div className="max-w-6xl p-6 space-y-8">
+          
+          {/* Header Campaign Banner */}
+          <div className="dashboard-panel flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '16px' }}>
+            <div>
+              <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>
+                {room.isSinglePlayer ? "FIFA World Cup Campaign 2026" : "Multiplayer Duel Arena"}
+              </p>
+              <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>
+                {hasFinished 
+                  ? (wonCup ? "🏆 CHAMPION!" : "💀 DEFEATED") 
+                  : (room.isSinglePlayer 
+                      ? `STAGE RUN: MATCH ${room.matchesPlayed + 1} OF 8` 
+                      : "CHALLENGE MATCH: 1-GAME FINAL")
+                }
+              </h2>
+              <p className="text-xs font-bold" style={{ color: 'var(--color-gold)', marginTop: '4px' }}>
+                {hasFinished ? (wonCup ? "YOU CLAIMED SUPREME GLORY!" : "YOU LOST THE DUEL") : (
+                  room.isSinglePlayer ? (
+                    room.matchesPlayed < 3 
+                      ? `GROUP STAGE MATCH - GROUP A`
+                      : room.matchesPlayed === 3 ? "ROUND of 32 (GAME 4)"
+                      : room.matchesPlayed === 4 ? "ROUND OF 16 (GAME 5)"
+                      : room.matchesPlayed === 5 ? "QUARTERFINAL (GAME 6)"
+                      : room.matchesPlayed === 6 ? "SEMIFINAL (GAME 7)" : "THE WORLD CUP FINAL (GAME 8)"
+                  ) : "DEFEAT YOUR OPPONENT TO CLAIM BRAGGING RIGHTS!"
+                )}
+              </p>
             </div>
-            {!hasFinished ? (
-              <button 
-                onClick={handleExitClick}
-                className="btn-sports"
-                style={{ padding: '6px 12px', background: '#c0392b', color: '#fff', border: 'none', width: 'auto', fontSize: '0.75rem', height: 'fit-content' }}
-              >
-                Leave Game
-              </button>
-            ) : (
-              <button 
-                onClick={() => {
-                  if (socket) socket.emit('leave_room', { roomId: room.roomId });
-                  setRoom(null);
-                  setLandingSubmenu("MAIN");
-                }}
-                className="btn-sports-secondary"
-                style={{ padding: '6px 12px', width: 'auto', fontSize: '0.75rem', height: 'fit-content' }}
-              >
-                Exit to Menu
-              </button>
-            )}
+
+            <div className="flex gap-4 items-center">
+              <div className="flex gap-2">
+                {room.matchesHistory.map((h, idx) => {
+                  const won = h.scoreA > h.scoreB;
+                  const draw = h.scoreA === h.scoreB;
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`result-bubble ${won ? 'badge-win' : draw ? 'badge-draw' : 'badge-loss'}`}
+                    >
+                      {won ? 'W' : draw ? 'D' : 'L'}
+                    </div>
+                  );
+                })}
+              </div>
+              {!hasFinished ? (
+                <button 
+                  onClick={handleExitClick}
+                  className="btn-sports"
+                  style={{ padding: '6px 12px', background: '#c0392b', color: '#fff', border: 'none', width: 'auto', fontSize: '0.75rem', height: 'fit-content' }}
+                >
+                  Leave Game
+                </button>
+              ) : (
+                <button 
+                  onClick={handleLeaveRoom}
+                  className="btn-sports-secondary"
+                  style={{ padding: '6px 12px', width: 'auto', fontSize: '0.75rem', height: 'fit-content' }}
+                >
+                  Exit to Menu
+                </button>
+              )}
+            </div>
           </div>
-        </div>
 
         {/* Dashboard Tabs Toggle */}
         <div className="tab-row">
@@ -2170,9 +2320,9 @@ export default function App() {
               <h3 className="text-sm uppercase font-bold border-b pb-2">Manager Board</h3>
 
               {user.manager && (
-                <div className="p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--color-gold)', fontSize: '0.78rem' }}>
-                  <div className="font-bold text-white">Manager: {user.manager.name} ({user.manager.country})</div>
-                  <div style={{ color: 'var(--color-gold)' }}>Boost: {user.manager.boost}</div>
+                <div className="manager-board-card">
+                  <div className="manager-board-name">Manager: {user.manager.name} ({user.manager.country})</div>
+                  <div className="manager-board-boost">Boost: {user.manager.boost}</div>
                 </div>
               )}
 
@@ -2190,11 +2340,11 @@ export default function App() {
                 </select>
               </div>
 
-              <div className="p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(46, 204, 113, 0.15)', fontSize: '0.75rem' }}>
-                <h4 className="font-bold mb-1" style={{ color: TACTIC_DETAILS[user.tactic]?.color }}>
+              <div className="tactic-info-card">
+                <h4 className="tactic-info-title">
                   {TACTIC_DETAILS[user.tactic]?.name}
                 </h4>
-                <p style={{ color: 'var(--color-text-dim)' }}>{TACTIC_DETAILS[user.tactic]?.desc}</p>
+                <p className="tactic-info-desc">{TACTIC_DETAILS[user.tactic]?.desc}</p>
               </div>
 
               {!hasFinished && (
@@ -2439,7 +2589,7 @@ export default function App() {
                         <tr key={idx}>
                           <td>{idx + 1}</td>
                           <td style={{ textAlign: 'left', fontWeight: 'bold' }}>{p.name}</td>
-                          <td style={{ color: 'var(--color-green)', fontWeight: 'bold' }}>{p.assists}</td>
+                          <td style={{ color: 'var(--color-gold)', fontWeight: 'bold' }}>{p.assists}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2591,13 +2741,25 @@ export default function App() {
                   {opponent.manager && <p className="text-xs mt-1" style={{ color: 'var(--color-text-dim)' }}>Manager: {opponent.manager.name}</p>}
                   <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Tactic: {opponent.tactic?.toUpperCase()}</p>
                 </div>
-                <div className="p-3" style={{ background: '#000', borderRadius: '8px', border: '1px solid rgba(231, 76, 60, 0.3)' }}>
-                  <div className="font-bold text-center text-md mb-2">POWER RATINGS</div>
-                  <div className="grid-2 text-xs">
-                    <div>OVR: <span className="font-bold text-white">{opponent.stats?.totalOvr}</span></div>
-                    <div>ATT: <span className="font-bold text-white">{opponent.stats?.att}</span></div>
-                    <div>MID: <span className="font-bold text-white">{opponent.stats?.mid}</span></div>
-                    <div>DEF: <span className="font-bold text-white">{opponent.stats?.def}</span></div>
+                <div className="scouting-power-box">
+                  <div className="scouting-power-title">POWER RATINGS</div>
+                  <div className="scouting-power-grid">
+                    <div className="scouting-power-item">
+                      OVR
+                      <span className="scouting-power-value">{opponent.stats?.totalOvr}</span>
+                    </div>
+                    <div className="scouting-power-item">
+                      ATT
+                      <span className="scouting-power-value">{opponent.stats?.att}</span>
+                    </div>
+                    <div className="scouting-power-item">
+                      MID
+                      <span className="scouting-power-value">{opponent.stats?.mid}</span>
+                    </div>
+                    <div className="scouting-power-item">
+                      DEF
+                      <span className="scouting-power-value">{opponent.stats?.def}</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2623,11 +2785,20 @@ export default function App() {
                           alignItems: 'center',
                           justifyContent: 'space-between',
                           boxShadow: '0 4px 8px rgba(0,0,0,0.4)',
-                          color: '#0c210d',
                           cursor: 'default',
                           transform: 'none'
                         }}
                       >
+                        {/* Custom Hover Tooltip Pop-up */}
+                        <div className="fut-card-tooltip">
+                          <div className="tooltip-stat"><span>PAC</span> {p.stats?.pace || 50}</div>
+                          <div className="tooltip-stat"><span>SHO</span> {p.stats?.shooting || 50}</div>
+                          <div className="tooltip-stat"><span>PAS</span> {p.stats?.passing || 50}</div>
+                          <div className="tooltip-stat"><span>DRI</span> {p.stats?.dribbling || 50}</div>
+                          <div className="tooltip-stat"><span>DEF</span> {p.stats?.defending || 50}</div>
+                          <div className="tooltip-stat"><span>PHY</span> {p.stats?.physical || 50}</div>
+                        </div>
+
                         <div className="flex justify-between w-full" style={{ fontSize: '0.65rem', fontWeight: 900, lineHeight: 1 }}>
                           <span>{p.rating}</span>
                           <span>{p.position}</span>
@@ -2635,7 +2806,7 @@ export default function App() {
                         <div style={{ margin: '2px 0' }}>
                           {renderJerseySVG(p.teamId || opponent.manager?.country, getInitials(p.name), 30)}
                         </div>
-                        <span className="font-bold text-center" style={{ width: '100%', fontSize: '0.62rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderBottom: '1px solid rgba(0,0,0,0.1)', paddingBottom: '2px' }}>
+                        <span className="font-bold text-center" style={{ width: '100%', fontSize: '0.62rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '2px' }}>
                           {p.name.split(' ').pop()}
                         </span>
                         <span style={{ fontSize: '0.48rem', opacity: 0.7, textTransform: 'uppercase', fontWeight: 800 }}>
@@ -2654,14 +2825,14 @@ export default function App() {
         {simulationActive && (
           <div style={{
             position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-            background: 'rgba(5, 12, 7, 0.96)', zIndex: 10000, display: 'flex',
+            background: 'rgba(0, 0, 0, 0.96)', zIndex: 10000, display: 'flex',
             alignItems: 'center', justifyContent: 'center', padding: '24px',
             overflowY: 'auto'
           }}>
-            <div className="dashboard-panel max-w-6xl p-6 space-y-6" style={{ margin: 'auto', border: '2px solid var(--color-green)' }}>
+            <div className="dashboard-panel max-w-6xl p-6 space-y-6" style={{ margin: 'auto', border: '2px solid rgba(255, 255, 255, 0.15)' }}>
               <h3 className="logo-heading text-center" style={{ fontSize: '1.4rem' }}>WORLD CUP SIMULATION</h3>
 
-              <div className="grid-2 text-center" style={{ gridTemplateColumns: '1.2fr auto 1.2fr', background: '#000', padding: '20px', borderRadius: '8px', border: '1px solid var(--color-green)', alignItems: 'center' }}>
+              <div className="grid-2 text-center" style={{ gridTemplateColumns: '1.2fr auto 1.2fr', background: '#000', padding: '20px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.15)', alignItems: 'center' }}>
                 <div>
                   <p className="font-bold text-lg text-white">{simDetails?.teamAName}</p>
                   <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>
@@ -2673,7 +2844,7 @@ export default function App() {
                     {getRunningScore()[0]} - {getRunningScore()[1]}
                   </div>
                   {!simFinished ? (
-                    <span className="text-xs font-bold uppercase animate-pulse" style={{ color: 'var(--color-green)', display: 'inline-block', marginTop: '6px' }}>LIVE MATCHPLAY</span>
+                    <span className="text-xs font-bold uppercase animate-pulse" style={{ color: '#ffffff', display: 'inline-block', marginTop: '6px' }}>LIVE MATCHPLAY</span>
                   ) : (
                     <span className="text-xs font-bold uppercase" style={{ color: 'var(--color-gold)', display: 'inline-block', marginTop: '6px' }}>FULL TIME</span>
                   )}
@@ -2767,51 +2938,17 @@ export default function App() {
             </div>
           </div>
         )}
-        {showForfeitConfirm && (
-          <div className="retro-popup-overlay" style={{
-            position: 'fixed',
-            top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0,0,0,0.85)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 99999999
-          }}>
-            <div className="dashboard-panel max-w-md" style={{
-              background: '#090909',
-              border: '3px double #ffffff',
-              padding: '30px',
-              textAlign: 'center',
-              boxShadow: '0 0 30px rgba(255,255,255,0.2)'
-            }}>
-              <AlertCircle size={48} style={{ color: '#c0392b', marginBottom: '16px', marginLeft: 'auto', marginRight: 'auto' }} />
-              <h3 style={{ fontFamily: "'Share Tech Mono', monospace", textTransform: 'uppercase', marginBottom: '12px', letterSpacing: '1px', color: '#c0392b' }}>
-                Forfeit Match?
-              </h3>
-              <p className="text-xs" style={{ color: '#cccccc', marginBottom: '24px', lineHeight: '1.6' }}>
-                Are you sure you want to exit? <br />
-                Leaving will result in an immediate <b>3-0 forfeit loss</b>.
-              </p>
-              <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-                <button 
-                  onClick={() => setShowForfeitConfirm(false)} 
-                  className="btn-sports-secondary"
-                  style={{ minWidth: '100px', fontSize: '0.8rem', padding: '10px 18px' }}
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={handleConfirmForfeit} 
-                  className="btn-sports"
-                  style={{ minWidth: '140px', fontSize: '0.8rem', padding: '10px 18px', background: '#c0392b', color: '#fff', border: 'none' }}
-                >
-                  Forfeit & Exit
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
+      {renderExitConfirmModal()}
+      {screenLoading && (
+        <div className="screen-transition-overlay">
+          <div className="screen-transition-content">
+            <div className="screen-transition-spinner"></div>
+            <div className="screen-transition-text">{loadingText}</div>
+          </div>
+        </div>
+      )}
+      </>
     );
   }
 
