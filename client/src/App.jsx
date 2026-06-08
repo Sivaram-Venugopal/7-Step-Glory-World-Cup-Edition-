@@ -1723,7 +1723,7 @@ export default function App() {
                             <button 
                               onClick={() => handleJoinActiveRoom(r.roomId)}
                               className="btn-sports"
-                              style={{ padding: '4px 10px', fontSize: '10px', width: 'auto', background: 'var(--color-green)', color: '#000' }}
+                              style={{ padding: '4px 10px', fontSize: '10px', width: 'auto', background: '#ffffff', color: '#000000', border: 'none' }}
                             >
                               Join
                             </button>
