@@ -4,18 +4,19 @@ import {
   Trophy, Users, User, ArrowRight, Play, RotateCcw, 
   Settings, Shield, ChevronRight, CheckCircle2, AlertCircle, Sparkles, RefreshCw
 } from 'lucide-react';
+import RetroDither from './RetroDither';
 
 const SOCKET_URL = window.location.hostname === 'localhost' 
   ? 'http://localhost:5000' 
   : `http://${window.location.hostname}:5000`;
 
 const TACTIC_DETAILS = {
-  "tiki-taka": { name: "Tiki-Taka", desc: "Focuses on short passing, ball control, and positional play.", color: "#2ecc71" },
-  "counter-attack": { name: "Counter-Attack", desc: "Solid defensive block with explosive transitions on breaks.", color: "#ff4b4b" },
-  "gegenpress": { name: "Gegenpress", desc: "Aggressive defensive pressure high up the pitch to win back possession.", color: "#2ecc71" },
-  "long-ball": { name: "Long Ball", desc: "Direct vertical distribution bypassing midfield to target tall forwards.", color: "#f1c40f" },
-  "park-the-bus": { name: "Park the Bus", desc: "Extremely deep defensive block prioritizing absolute safety.", color: "#8e9bb4" },
-  "wing-play": { name: "Wing Play", desc: "Spreads play wide to cross balls into the box from the flanks.", color: "#f1c40f" }
+  "tiki-taka": { name: "Tiki-Taka", desc: "Focuses on short passing, ball control, and positional play.", color: "#ffffff" },
+  "counter-attack": { name: "Counter-Attack", desc: "Solid defensive block with explosive transitions on breaks.", color: "#888888" },
+  "gegenpress": { name: "Gegenpress", desc: "Aggressive defensive pressure high up the pitch to win back possession.", color: "#dddddd" },
+  "long-ball": { name: "Long Ball", desc: "Direct vertical distribution bypassing midfield to target tall forwards.", color: "#aaaaaa" },
+  "park-the-bus": { name: "Park the Bus", desc: "Extremely deep defensive block prioritizing absolute safety.", color: "#555555" },
+  "wing-play": { name: "Wing Play", desc: "Spreads play wide to cross balls into the box from the flanks.", color: "#cccccc" }
 };
 
 const ALL_HISTORICAL_NATIONS = [
@@ -147,24 +148,88 @@ const NATION_COLORS = {
   "serbia": ['#c0392b', '#ffffff']
 };
 
+function hexToGrayscale(hex, isInk = false) {
+  if (!hex || hex.length < 7) return isInk ? '#000000' : '#ffffff';
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  
+  if (isNaN(r) || isNaN(g) || isNaN(b)) {
+    return isInk ? '#000000' : '#ffffff';
+  }
+
+  const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+  
+  if (isInk) {
+    return luma < 128 ? '#ffffff' : '#000000';
+  }
+  
+  let q;
+  if (luma < 64) q = 30;
+  else if (luma < 128) q = 100;
+  else if (luma < 192) q = 180;
+  else q = 245;
+  
+  return `rgb(${q}, ${q}, ${q})`;
+}
+
 function getNationColors(teamId) {
-  if (!teamId) return ['#2ecc71', '#ffffff']; // Default green/white
+  if (!teamId) return ['#f0f0f0', '#101010'];
   const lower = teamId.toLowerCase().replace(/_/g, ' ');
+  let origColors = ['#f0f0f0', '#101010'];
   for (const country in NATION_COLORS) {
     if (lower.includes(country)) {
-      return NATION_COLORS[country];
+      origColors = NATION_COLORS[country];
+      break;
     }
   }
-  return ['#2ecc71', '#ffffff'];
+  const bgGrayscale = hexToGrayscale(origColors[0], false);
+  const fgGrayscale = hexToGrayscale(origColors[0], true);
+  return [bgGrayscale, fgGrayscale];
 }
 
 const JERSEY_PATH = 'M22 6 L10 12 L4 26 L14 32 L20 27 L20 58 L44 58 L44 27 L50 32 L60 26 L54 12 L42 6 C42 6 38 12 32 12 C26 12 22 6 22 6 Z';
 function renderJerseySVG(teamId, initials, size = 42) {
   const [bg, ink] = getNationColors(teamId);
+  const lower = (teamId || "").toLowerCase();
+  
+  let fillVal = bg;
+  
+  if (lower.includes("argentina")) {
+    fillVal = "url(#stripes-jersey)";
+  } else if (lower.includes("croatia")) {
+    fillVal = "url(#checker-jersey)";
+  } else if (lower.includes("brazil") || lower.includes("germany") || lower.includes("spain") || lower.includes("italy")) {
+    fillVal = `url(#dither-jersey-${lower.includes("brazil") || lower.includes("spain") ? 'light' : 'dark'})`;
+  }
+
   return (
     <svg viewBox="0 0 64 64" width={size} height={size} aria-hidden="true" style={{ display: 'block' }}>
-      <path d={JERSEY_PATH} fill={bg} stroke="rgba(255,255,255,.2)" strokeWidth="1.5"/>
-      <text x="32" y="44" textAnchor="middle" fontFamily="sans-serif" fontSize="16" fontWeight="900" fill={ink}>
+      <defs>
+        <pattern id="stripes-jersey" width="12" height="12" patternUnits="userSpaceOnUse">
+          <rect width="6" height="12" fill="#f0f0f0" />
+          <rect x="6" width="6" height="12" fill="#606060" />
+        </pattern>
+        <pattern id="checker-jersey" width="12" height="12" patternUnits="userSpaceOnUse">
+          <rect width="6" height="6" fill="#f0f0f0" />
+          <rect x="6" width="6" height="6" fill="#303030" />
+          <rect y="6" width="6" height="6" fill="#303030" />
+          <rect x="6" y="6" width="6" height="6" fill="#f0f0f0" />
+        </pattern>
+        <pattern id="dither-jersey-light" width="4" height="4" patternUnits="userSpaceOnUse">
+          <rect width="4" height="4" fill="#e0e0e0" />
+          <rect width="2" height="2" fill="#808080" />
+          <rect x="2" y="2" width="2" height="2" fill="#808080" />
+        </pattern>
+        <pattern id="dither-jersey-dark" width="4" height="4" patternUnits="userSpaceOnUse">
+          <rect width="4" height="4" fill="#303030" />
+          <rect width="2" height="2" fill="#a0a0a0" />
+          <rect x="2" y="2" width="2" height="2" fill="#a0a0a0" />
+        </pattern>
+      </defs>
+      <path d={JERSEY_PATH} fill={fillVal} stroke="rgba(255,255,255,.3)" strokeWidth="2"/>
+      <circle cx="32" cy="40" r="11" fill={ink === '#ffffff' ? '#000000' : '#ffffff'} opacity="0.85" />
+      <text x="32" y="44" textAnchor="middle" fontFamily="'Share Tech Mono', monospace" fontSize="13" fontWeight="900" fill={ink}>
         {initials}
       </text>
     </svg>
@@ -189,9 +254,23 @@ function ovClass(o) {
 
 export default function App() {
   const [socket, setSocket] = useState(null);
+  const [introState, setIntroState] = useState('playing'); // 'playing' | 'fading' | 'done'
   const [playerName, setPlayerName] = useState('');
   const [roomId, setRoomId] = useState('');
   const [isSinglePlayer, setIsSinglePlayer] = useState(false);
+
+  useEffect(() => {
+    const timer1 = setTimeout(() => {
+      setIntroState('fading');
+    }, 3200);
+    const timer2 = setTimeout(() => {
+      setIntroState('done');
+    }, 4000);
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
+  }, []);
   
   const [room, setRoom] = useState(null);
   const [localPlayer, setLocalPlayer] = useState(null);
@@ -608,6 +687,35 @@ export default function App() {
     return running;
   };
 
+  if (introState !== 'done') {
+    return (
+      <div className={`intro-overlay ${introState === 'fading' ? 'fade-out' : ''}`}>
+        <div className="intro-content">
+          <div className="intro-logo-container">
+            <Trophy size={80} className="intro-trophy" />
+            <div className="intro-football-wrapper">
+              <svg viewBox="0 0 64 64" width="48" height="48" className="intro-football">
+                <circle cx="32" cy="32" r="30" fill="#f0f0f0" stroke="#101010" strokeWidth="4" />
+                <polygon points="32,22 40,28 37,38 27,38 24,28" fill="#101010" />
+                <line x1="32" y1="22" x2="32" y2="2" stroke="#101010" strokeWidth="4" />
+                <line x1="40" y1="28" x2="59" y2="22" stroke="#101010" strokeWidth="4" />
+                <line x1="37" y1="38" x2="49" y2="56" stroke="#101010" strokeWidth="4" />
+                <line x1="27" y1="38" x2="15" y2="56" stroke="#101010" strokeWidth="4" />
+                <line x1="24" y1="28" x2="5" y2="22" stroke="#101010" strokeWidth="4" />
+              </svg>
+            </div>
+          </div>
+          <h1 className="intro-title" style={{ fontFamily: "'Share Tech Mono', monospace" }}>WORLD CUP DRAFT</h1>
+          <h2 className="intro-subtitle" style={{ fontFamily: "'Share Tech Mono', monospace" }}>7-STEP TROPHY RUN</h2>
+          <div className="intro-loading-text">BOOTING RETRO SYSTEM...</div>
+          <button className="intro-skip-btn" onClick={() => setIntroState('done')}>
+            SKIP INTRO
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Render Landing Page
   if (!room) {
     return (
@@ -623,10 +731,13 @@ export default function App() {
           </div>
 
           <div className="stadium-banner-frame">
-            <img 
-              src="/world_cup_banner.png" 
+            <RetroDither 
+              src="/world_cup_banner_new.png" 
+              pixelSize={2}
+              brightness={1.0}
+              contrast={1.4}
+              className="stadium-banner-img"
               alt="World Cup 2026 Stadium Banner" 
-              className="stadium-banner-img" 
             />
           </div>
 
