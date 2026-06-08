@@ -531,7 +531,7 @@ export default function App() {
     setSession(null);
     setUser(null);
     setAuthMode("LOGIN");
-    setShowLocalSignUp(false);
+    setShowSignUpPopup(false);
     setLocalAuthError("");
     setLocalAuthSuccess("");
   };
