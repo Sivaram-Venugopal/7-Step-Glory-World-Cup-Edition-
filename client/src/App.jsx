@@ -285,6 +285,7 @@ export default function App() {
   const [signupConfirmPassword, setSignupConfirmPassword] = useState("");
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showSignupPassword, setShowSignupPassword] = useState(false);
+  const [showLocalSignUp, setShowLocalSignUp] = useState(false);
   const [localAuthError, setLocalAuthError] = useState("");
   const [localAuthSuccess, setLocalAuthSuccess] = useState("");
 
@@ -348,7 +349,12 @@ export default function App() {
     const lowerName = loginManagerName.trim().toLowerCase();
 
     if (!managers[lowerName]) {
-      setLocalAuthError("Manager name not registered. Fill in the form on the right to sign up!");
+      // Account does not exist, redirect to Create Manager flow
+      setSignupManagerName(loginManagerName.trim());
+      setSignupPassword(loginPassword);
+      setSignupConfirmPassword("");
+      setShowLocalSignUp(true);
+      setLocalAuthError("Manager name not registered. Confirm your password below to create a new profile!");
       return;
     }
 
@@ -394,7 +400,7 @@ export default function App() {
     const lowerName = signupManagerName.trim().toLowerCase();
 
     if (managers[lowerName]) {
-      setLocalAuthError("Manager name already registered. Try signing in on the left!");
+      setLocalAuthError("This manager name is already registered. Try signing in!");
       return;
     }
 
@@ -459,6 +465,7 @@ export default function App() {
     setSession(null);
     setUser(null);
     setAuthMode("LOGIN");
+    setShowLocalSignUp(false);
     setLocalAuthError("");
     setLocalAuthSuccess("");
   };
@@ -920,7 +927,7 @@ export default function App() {
   if (!user) {
     return (
       <div className="landing-wrapper" style={{ padding: '40px 20px', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
-        <div className="dashboard-panel" style={{ maxWidth: '850px', width: '100%', margin: 'auto' }}>
+        <div className="dashboard-panel max-w-md" style={{ width: '100%', margin: 'auto' }}>
           <div className="text-center mb-6">
             <div className="flex justify-center mb-2">
               <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
@@ -942,15 +949,14 @@ export default function App() {
             </div>
           )}
 
-          <div className="grid-2" style={{ gap: '32px' }}>
-            
-            {/* LEFT COLUMN: SIGN IN */}
-            <div className="space-y-4 pr-0 md:pr-4" style={{ borderRight: '1px solid rgba(46, 204, 113, 0.15)' }}>
+          {!showLocalSignUp ? (
+            /* --- SIGN IN VIEW --- */
+            <div className="space-y-4">
               <h3 className="text-sm uppercase font-bold border-b pb-2 flex items-center gap-2" style={{ color: 'var(--color-gold)' }}>
                 <User size={16} /> Sign In
               </h3>
               <p className="text-[11px]" style={{ color: 'var(--color-text-dim)' }}>
-                Enter your registered Manager Name and Password to resume your career.
+                Enter your Manager Name and Password. If your profile is not registered, you will be redirected to create one.
               </p>
 
               <form onSubmit={handleLocalSignIn} className="space-y-4">
@@ -992,14 +998,14 @@ export default function App() {
                 </button>
               </form>
             </div>
-
-            {/* RIGHT COLUMN: SIGN UP */}
-            <div className="space-y-4 pt-6 md:pt-0">
+          ) : (
+            /* --- CREATE PROFILE (SIGN UP) VIEW --- */
+            <div className="space-y-4">
               <h3 className="text-sm uppercase font-bold border-b pb-2 flex items-center gap-2" style={{ color: 'var(--color-green)' }}>
                 <Sparkles size={16} /> Create Manager Profile
               </h3>
               <p className="text-[11px]" style={{ color: 'var(--color-text-dim)' }}>
-                First-time manager? Register your name and passcode to begin your campaign.
+                Confirm your passcode profile details to register this manager name and begin your campaign.
               </p>
 
               <form onSubmit={handleLocalSignUp} className="space-y-4">
@@ -1052,10 +1058,20 @@ export default function App() {
                 <button type="submit" className="btn-sports w-full mt-2" style={{ background: 'var(--color-green)', color: '#000', border: 'none' }}>
                   <CheckCircle2 size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} /> Register Manager
                 </button>
+
+                <div className="text-center pt-2">
+                  <button 
+                    type="button" 
+                    onClick={() => { setShowLocalSignUp(false); setLocalAuthError(""); }} 
+                    className="text-xs underline" 
+                    style={{ color: 'var(--color-gold)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                  >
+                    Back to Sign In
+                  </button>
+                </div>
               </form>
             </div>
-
-          </div>
+          )}
         </div>
       </div>
     );
