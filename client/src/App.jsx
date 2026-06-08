@@ -1,12 +1,50 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { 
-  Trophy, Users, User, ArrowRight, Play, RotateCcw, 
+  Users, User, ArrowRight, Play, RotateCcw, 
   Settings, Shield, ChevronRight, CheckCircle2, AlertCircle, Sparkles, RefreshCw,
   LogOut, Calendar, Award, Eye, EyeOff
 } from 'lucide-react';
 import RetroDither from './RetroDither';
 import { supabase, isSupabaseConfigured } from './supabase.js';
+
+const WorldCupTrophy = ({ size = 24, className = "", style = {}, ...props }) => {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      fill="currentColor"
+      className={className}
+      style={{ display: 'inline-block', verticalAlign: 'middle', ...style }}
+      {...props}
+    >
+      {/* Globe at the top */}
+      <circle cx="32" cy="16" r="10" />
+      <path d="M26 13.5c3 1.5 6 2 10 0" fill="none" stroke="var(--bg-dark, #000)" strokeWidth="1.2" opacity="0.3" />
+      <path d="M24.5 17.5c4 2 8 2.5 13.5-.5" fill="none" stroke="var(--bg-dark, #000)" strokeWidth="1.2" opacity="0.3" />
+      <path d="M29 9c2 1 4 2 4 4.5S31 19.5 31.5 22" fill="none" stroke="var(--bg-dark, #000)" strokeWidth="1" opacity="0.25" />
+      
+      {/* Swirling figures supporting the globe */}
+      <path d="M22 50c.5-3.5 1.5-7.5 1.5-12.5s-2.5-9-4-11c-1-1.5-1.5-3 0-3.5s3.5.5 5 3.5c1.8 3.5 2.5 8 2 13.5s-1.5 10-1.5 10h-3z" />
+      <path d="M42 50c-.5-3.5-1.5-7.5-1.5-12.5s2.5-9 4-11c1-1.5 1.5-3 0-3.5s-3.5.5-5 3.5c-1.8 3.5-2.5 8-2 13.5s1.5 10 1.5 10h3z" />
+      
+      {/* Central rising core */}
+      <path d="M28 50c.5-5 2.5-10.5 4-16.5 .5-2 1.5-2 2 0 1.5 6 3.5 11.5 4 16.5h-10z" />
+      
+      {/* Ribbon extensions wrapping globe */}
+      <path d="M21 21.5c4-2 8.5-5 11-10c.5 1.5 1.5 3 2.5 3 2.5 0 4-2.5 6.5-5.5c-1.5 3-4 5-6.5 5-2 0-3.5-1.5-4.5-3.5-1.5 2.5-4.5 5-7.5 6.5c-1.2.6-1.5 4.5-1.5 4.5z" />
+
+      {/* Base: Stack of rings */}
+      <path d="M25 48h14v3H25z" />
+      <path d="M22 51h20v2H22z" fill="rgba(255,255,255,0.4)" />
+      <path d="M21 53h22v3H21z" />
+      <path d="M19 56h26v2H19z" fill="rgba(255,255,255,0.4)" />
+      <path d="M18 58h28v4H18z" />
+    </svg>
+  );
+};
 
 const SOCKET_URL = window.location.hostname === 'localhost' 
   ? 'http://localhost:5000' 
@@ -260,6 +298,8 @@ export default function App() {
   const [playerName, setPlayerName] = useState('');
   const [roomId, setRoomId] = useState('');
   const [isSinglePlayer, setIsSinglePlayer] = useState(false);
+  const [screenLoading, setScreenLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState('LOADING SYSTEM...');
 
   useEffect(() => {
     const timer1 = setTimeout(() => {
@@ -701,7 +741,16 @@ export default function App() {
     setSocket(s);
 
     s.on('room_update', (roomState) => {
-      setRoom(roomState);
+      setRoom(prevRoom => {
+        if (prevRoom && prevRoom.status === 'lobby' && roomState.status === 'drafting') {
+          setLoadingText('INITIALIZING DRAFT BOARD...');
+          setScreenLoading(true);
+          setTimeout(() => {
+            setScreenLoading(false);
+          }, 800);
+        }
+        return roomState;
+      });
       const lp = roomState.players.find(p => p.id === s.id);
       setLocalPlayer(lp);
 
@@ -871,23 +920,38 @@ export default function App() {
   const handleCreateRoom = (e) => {
     e.preventDefault();
     if (!playerName) return;
+    setLoadingText('CREATING LOBBY...');
+    setScreenLoading(true);
     const rId = Math.random().toString(36).substring(2, 6).toUpperCase();
     setRoomId(rId);
-    socket.emit('join_room', { roomId: rId, playerName, isHost: true, isSinglePlayer: false });
+    setTimeout(() => {
+      socket.emit('join_room', { roomId: rId, playerName, isHost: true, isSinglePlayer: false });
+      setScreenLoading(false);
+    }, 600);
   };
 
   const handleJoinRoom = (e) => {
     e.preventDefault();
     if (!playerName || !roomId) return;
-    socket.emit('join_room', { roomId: roomId.toUpperCase(), playerName, isHost: false, isSinglePlayer: false });
+    setLoadingText('CONNECTING TO LOBBY...');
+    setScreenLoading(true);
+    setTimeout(() => {
+      socket.emit('join_room', { roomId: roomId.toUpperCase(), playerName, isHost: false, isSinglePlayer: false });
+      setScreenLoading(false);
+    }, 600);
   };
 
   const handleSinglePlayer = () => {
     if (!playerName) return;
+    setLoadingText('BOOTING CAMPAIGN...');
+    setScreenLoading(true);
     const rId = "SOLO-" + Math.random().toString(36).substring(2, 6).toUpperCase();
     setRoomId(rId);
     setIsSinglePlayer(true);
-    socket.emit('join_room', { roomId: rId, playerName, isHost: true, isSinglePlayer: true });
+    setTimeout(() => {
+      socket.emit('join_room', { roomId: rId, playerName, isHost: true, isSinglePlayer: true });
+      setScreenLoading(false);
+    }, 600);
   };
 
   const handleUpdateSettings = (formation, tactic, teamName) => {
@@ -920,6 +984,7 @@ export default function App() {
 
   const isPlayerEligibleForDraft = (player) => {
     if (!localPlayer || !room) return false;
+    if (draftData?.manager) return false; // Enforce manager selection first
     
     // Check if there is a compatible empty slot on the starting XI
     const hasCompatiblePitchSlot = getPlayerPositions(localPlayer.formation).some((_, idx) => {
@@ -936,6 +1001,7 @@ export default function App() {
 
   // Select player from draft roster card
   const handleSelectDraftPlayer = (player) => {
+    if (draftData?.manager) return; // Enforce manager selection first
     setSelectedCard(player);
   };
 
@@ -1083,7 +1149,7 @@ export default function App() {
       <div className={`intro-overlay ${introState === 'fading' ? 'fade-out' : ''}`}>
         <div className="intro-content">
           <div className="intro-logo-container">
-            <Trophy size={80} className="intro-trophy" />
+            <WorldCupTrophy size={80} className="intro-trophy" />
             <div className="intro-football-wrapper">
               <svg viewBox="0 0 64 64" width="48" height="48" className="intro-football">
                 <circle cx="32" cy="32" r="30" fill="#f0f0f0" stroke="#101010" strokeWidth="4" />
@@ -1107,10 +1173,11 @@ export default function App() {
   // Render Auth screen if not logged in
   if (!user) {
     return (
+      <>
       <div className="landing-wrapper" style={{ padding: '40px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', gap: '24px' }}>
         <div className="text-center">
           <div className="flex justify-center mb-2">
-            <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
+            <WorldCupTrophy size={46} style={{ color: 'var(--color-gold)' }} />
           </div>
           <h1 className="logo-heading" style={{ fontSize: '2.4rem' }}>WORLD CUP DRAFT</h1>
           <h2 className="sub-heading" style={{ fontSize: '0.85rem', letterSpacing: '3px' }}>7-Step Trophy Run</h2>
@@ -1222,12 +1289,22 @@ export default function App() {
           </div>
         )}
       </div>
+      {screenLoading && (
+        <div className="screen-transition-overlay">
+          <div className="screen-transition-content">
+            <div className="screen-transition-spinner"></div>
+            <div className="screen-transition-text">{loadingText}</div>
+          </div>
+        </div>
+      )}
+      </>
     );
   }
 
   // Render Landing Page
   if (!room) {
     return (
+      <>
       <div className="landing-wrapper" style={{ flexDirection: 'column', gap: '12px' }}>
         {user && (
           <div className="flex justify-between items-center" style={{ width: '100%', maxWidth: '480px', fontSize: '0.75rem', fontFamily: "'Share Tech Mono', monospace", padding: '0 8px' }}>
@@ -1243,7 +1320,7 @@ export default function App() {
         <div className="dashboard-panel max-w-md">
           <div className="text-center mb-6">
             <div className="flex justify-center mb-2">
-              <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
+              <WorldCupTrophy size={46} style={{ color: 'var(--color-gold)' }} />
             </div>
             <h1 className="logo-heading">WORLD CUP DRAFT</h1>
             <h2 className="sub-heading">7-Step Trophy Run</h2>
@@ -1263,14 +1340,14 @@ export default function App() {
 
           <div className="space-y-6">
             <div>
-              <label className="block text-xs uppercase font-bold mb-2" style={{ color: 'var(--color-green)' }}>Active Manager Profile</label>
+              <label className="block text-xs uppercase font-bold mb-2" style={{ color: '#ffffff' }}>Active Manager Profile</label>
               <input 
                 type="text" 
                 placeholder="Manager Name..." 
                 value={playerName} 
                 className="sports-input" 
                 disabled={true}
-                style={{ opacity: 0.8, cursor: 'not-allowed', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(46, 204, 113, 0.15)' }}
+                style={{ opacity: 0.8, cursor: 'not-allowed', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255, 255, 255, 0.15)' }}
               />
             </div>
 
@@ -1314,6 +1391,15 @@ export default function App() {
           </div>
         </div>
       </div>
+      {screenLoading && (
+        <div className="screen-transition-overlay">
+          <div className="screen-transition-content">
+            <div className="screen-transition-spinner"></div>
+            <div className="screen-transition-text">{loadingText}</div>
+          </div>
+        </div>
+      )}
+      </>
     );
   }
 
@@ -1530,10 +1616,12 @@ export default function App() {
               
               {/* Step instructions */}
               <div className="alert-box alert-box-amber text-xs font-semibold">
-                {selectedCard ? (
+                {draftData.manager ? (
+                  <span>» <b>REQUIRED STEP:</b> You must draft the manager first to unlock player roster selection.</span>
+                ) : selectedCard ? (
                   <span>» <b>STEP 2:</b> Click a flashing node on the pitch map or substitute bench to assign <b>{selectedCard.name}</b>.</span>
                 ) : (
-                  <span>» <b>STEP 1:</b> Select a player from the roster list below, or draft the team manager if available.</span>
+                  <span>» <b>STEP 1:</b> Select a player from the roster list below.</span>
                 )}
               </div>
 
@@ -1580,7 +1668,9 @@ export default function App() {
                 
                 <div className="draft-subhead" style={{ justifyContent: 'center' }}>
                   <span className="draft-instruct">
-                    {selectedCard ? (
+                    {draftData.manager ? (
+                      <span style={{ color: 'var(--color-gold)' }}>» <b>DRAFT LOCK:</b> Manager selection required.</span>
+                    ) : selectedCard ? (
                       <span>» <b>STEP 2:</b> Click a flashing node on the pitch map to assign <b>{selectedCard.name}</b>.</span>
                     ) : (
                       <span>» <b>STEP 1:</b> Click a player card below to select them.</span>
@@ -1588,7 +1678,7 @@ export default function App() {
                   </span>
                 </div>
                 
-                <div className="player-list-grid">
+                <div className={`player-list-grid ${draftData.manager ? 'draft-locked' : ''}`}>
                   {draftData.choices
                     .filter(choice => choice.name.toLowerCase().includes(searchQuery.toLowerCase()))
                     .map((choice) => {
@@ -2127,7 +2217,7 @@ export default function App() {
                         <tr key={idx}>
                           <td>{idx + 1}</td>
                           <td style={{ textAlign: 'left', fontWeight: 'bold' }}>{p.name}</td>
-                          <td style={{ color: 'var(--color-green)', fontWeight: 'bold' }}>{p.assists}</td>
+                          <td style={{ color: 'var(--color-gold)', fontWeight: 'bold' }}>{p.assists}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2363,14 +2453,14 @@ export default function App() {
         {simulationActive && (
           <div style={{
             position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-            background: 'rgba(5, 12, 7, 0.96)', zIndex: 10000, display: 'flex',
+            background: 'rgba(0, 0, 0, 0.96)', zIndex: 10000, display: 'flex',
             alignItems: 'center', justifyContent: 'center', padding: '24px',
             overflowY: 'auto'
           }}>
-            <div className="dashboard-panel max-w-6xl p-6 space-y-6" style={{ margin: 'auto', border: '2px solid var(--color-green)' }}>
+            <div className="dashboard-panel max-w-6xl p-6 space-y-6" style={{ margin: 'auto', border: '2px solid rgba(255, 255, 255, 0.15)' }}>
               <h3 className="logo-heading text-center" style={{ fontSize: '1.4rem' }}>WORLD CUP SIMULATION</h3>
 
-              <div className="grid-2 text-center" style={{ gridTemplateColumns: '1.2fr auto 1.2fr', background: '#000', padding: '20px', borderRadius: '8px', border: '1px solid var(--color-green)', alignItems: 'center' }}>
+              <div className="grid-2 text-center" style={{ gridTemplateColumns: '1.2fr auto 1.2fr', background: '#000', padding: '20px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.15)', alignItems: 'center' }}>
                 <div>
                   <p className="font-bold text-lg text-white">{simDetails?.teamAName}</p>
                   <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>
@@ -2382,7 +2472,7 @@ export default function App() {
                     {getRunningScore()[0]} - {getRunningScore()[1]}
                   </div>
                   {!simFinished ? (
-                    <span className="text-xs font-bold uppercase animate-pulse" style={{ color: 'var(--color-green)', display: 'inline-block', marginTop: '6px' }}>LIVE MATCHPLAY</span>
+                    <span className="text-xs font-bold uppercase animate-pulse" style={{ color: '#ffffff', display: 'inline-block', marginTop: '6px' }}>LIVE MATCHPLAY</span>
                   ) : (
                     <span className="text-xs font-bold uppercase" style={{ color: 'var(--color-gold)', display: 'inline-block', marginTop: '6px' }}>FULL TIME</span>
                   )}
@@ -2478,6 +2568,14 @@ export default function App() {
         )}
       </div>
       {renderExitConfirmModal()}
+      {screenLoading && (
+        <div className="screen-transition-overlay">
+          <div className="screen-transition-content">
+            <div className="screen-transition-spinner"></div>
+            <div className="screen-transition-text">{loadingText}</div>
+          </div>
+        </div>
+      )}
       </>
     );
   }
