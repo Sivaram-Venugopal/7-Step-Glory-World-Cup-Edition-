@@ -1,3 +1,11 @@
+-- Drop existing tables to allow clean re-run of schema queries
+DROP TABLE IF EXISTS public.tournament_matches CASCADE;
+DROP TABLE IF EXISTS public.tournaments CASCADE;
+DROP TABLE IF EXISTS public.players CASCADE;
+DROP TABLE IF EXISTS public.historical_teams CASCADE;
+DROP TABLE IF EXISTS public.managers CASCADE;
+DROP TABLE IF EXISTS public.manager_accounts CASCADE;
+
 -- 1. Create Historical Teams Table
 CREATE TABLE public.historical_teams (
     id TEXT PRIMARY KEY,
