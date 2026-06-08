@@ -744,6 +744,29 @@ export default function App() {
     };
   }, []);
 
+  // Intercept back navigation when in room/game
+  useEffect(() => {
+    if (!room) return;
+
+    // Push dummy state to capture the popstate
+    window.history.pushState({ inRoom: true }, '');
+
+    const handlePopState = (event) => {
+      // Restore dummy state immediately to block navigation
+      window.history.pushState({ inRoom: true }, '');
+
+      const confirmLeave = window.confirm("Are you sure you want to exit the current game?");
+      if (confirmLeave) {
+        handleLeaveRoom();
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [room, socket]);
+
   // Live simulation ticker scroll
   useEffect(() => {
     if (!simulationActive || !simDetails || shootoutState) return;
@@ -830,6 +853,18 @@ export default function App() {
   useEffect(() => {
     eventListEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [visibleEvents]);
+
+  const handleLeaveRoom = () => {
+    if (socket) {
+      socket.disconnect();
+      socket.connect();
+    }
+    setRoom(null);
+    setDraftData(null);
+    setSimulationActive(false);
+    setSimDetails(null);
+    setSupabaseTournamentId(null);
+  };
 
   // Actions
   const handleCreateRoom = (e) => {
@@ -1010,9 +1045,6 @@ export default function App() {
           <h1 className="intro-title">WORLD CUP DRAFT</h1>
           <h2 className="intro-subtitle">7-STEP TROPHY RUN</h2>
           <div className="intro-loading-text">BOOTING RETRO SYSTEM...</div>
-          <button className="intro-skip-btn" onClick={() => setIntroState('done')}>
-            SKIP INTRO
-          </button>
         </div>
       </div>
     );
@@ -1241,11 +1273,20 @@ export default function App() {
               <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Lobby Code</p>
               <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>{room.roomId}</h2>
             </div>
-            {room.isSinglePlayer ? (
-              <span className="alert-box text-xs" style={{ padding: '6px 12px' }}>CAMPAIGN (48-TEAM STAGE)</span>
-            ) : (
-              <span className="alert-box alert-box-amber text-xs" style={{ padding: '6px 12px' }}>MULTIPLAYER DUEL</span>
-            )}
+            <div className="flex gap-3 items-center">
+              {room.isSinglePlayer ? (
+                <span className="alert-box text-xs" style={{ padding: '6px 12px' }}>CAMPAIGN (48-TEAM STAGE)</span>
+              ) : (
+                <span className="alert-box alert-box-amber text-xs" style={{ padding: '6px 12px' }}>MULTIPLAYER DUEL</span>
+              )}
+              <button 
+                onClick={handleLeaveRoom} 
+                className="btn-sports-secondary" 
+                style={{ padding: '6px 12px', fontSize: '0.7rem' }}
+              >
+                Exit Lobby
+              </button>
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -1327,11 +1368,11 @@ export default function App() {
                   </select>
                 </div>
               </div>
-              <div className="p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(46, 204, 113, 0.15)' }}>
-                <h4 className="text-xs uppercase font-bold mb-1" style={{ color: TACTIC_DETAILS[localPlayer.tactic]?.color }}>
+              <div className="tactic-info-card">
+                <h4 className="tactic-info-title">
                   {TACTIC_DETAILS[localPlayer.tactic]?.name}
                 </h4>
-                <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>{TACTIC_DETAILS[localPlayer.tactic]?.desc}</p>
+                <p className="tactic-info-desc">{TACTIC_DETAILS[localPlayer.tactic]?.desc}</p>
               </div>
             </div>
           )}
@@ -1387,11 +1428,24 @@ export default function App() {
               <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Draft Round {room.draftRound} of 15</p>
               <h2 className="text-lg font-bold">Draft Player or Manager</h2>
             </div>
-            <div className="text-right">
-              <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Spun Nation</p>
-              <p className="font-extrabold text-white text-md">
-                {room.spunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
-              </p>
+            <div className="text-right flex items-center gap-4">
+              <div>
+                <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Spun Nation</p>
+                <p className="font-extrabold text-white text-md">
+                  {room.spunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
+                </p>
+              </div>
+              <button 
+                onClick={() => {
+                  if (window.confirm("Are you sure you want to exit the current draft session?")) {
+                    handleLeaveRoom();
+                  }
+                }} 
+                className="btn-sports-secondary" 
+                style={{ padding: '6px 12px', fontSize: '0.7rem' }}
+              >
+                Exit Game
+              </button>
             </div>
           </div>
 
@@ -1696,19 +1750,32 @@ export default function App() {
             </p>
           </div>
 
-          <div className="flex gap-2">
-            {room.matchesHistory.map((h, idx) => {
-              const won = h.scoreA > h.scoreB;
-              const draw = h.scoreA === h.scoreB;
-              return (
-                <div 
-                  key={idx} 
-                  className={`result-bubble ${won ? 'badge-win' : draw ? 'badge-draw' : 'badge-loss'}`}
-                >
-                  {won ? 'W' : draw ? 'D' : 'L'}
-                </div>
-              );
-            })}
+          <div className="flex gap-4 items-center">
+            <div className="flex gap-2">
+              {room.matchesHistory.map((h, idx) => {
+                const won = h.scoreA > h.scoreB;
+                const draw = h.scoreA === h.scoreB;
+                return (
+                  <div 
+                    key={idx} 
+                    className={`result-bubble ${won ? 'badge-win' : draw ? 'badge-draw' : 'badge-loss'}`}
+                  >
+                    {won ? 'W' : draw ? 'D' : 'L'}
+                  </div>
+                );
+              })}
+            </div>
+            <button 
+              onClick={() => {
+                if (window.confirm("Are you sure you want to exit the current tournament run?")) {
+                  handleLeaveRoom();
+                }
+              }} 
+              className="btn-sports-secondary" 
+              style={{ padding: '6px 12px', fontSize: '0.7rem' }}
+            >
+              Exit Tournament
+            </button>
           </div>
         </div>
 
@@ -1749,11 +1816,11 @@ export default function App() {
                 </select>
               </div>
 
-              <div className="p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(46, 204, 113, 0.15)', fontSize: '0.75rem' }}>
-                <h4 className="font-bold mb-1" style={{ color: TACTIC_DETAILS[user.tactic]?.color }}>
+              <div className="tactic-info-card">
+                <h4 className="tactic-info-title">
                   {TACTIC_DETAILS[user.tactic]?.name}
                 </h4>
-                <p style={{ color: 'var(--color-text-dim)' }}>{TACTIC_DETAILS[user.tactic]?.desc}</p>
+                <p className="tactic-info-desc">{TACTIC_DETAILS[user.tactic]?.desc}</p>
               </div>
 
               {!hasFinished && (

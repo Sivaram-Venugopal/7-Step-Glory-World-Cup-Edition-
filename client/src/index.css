@@ -1517,3 +1517,30 @@ select.sports-input option {
   border-radius: 4px;
 }
 
+/* Custom Polish: Tactic Information Card (Removes green border and fixes alignment) */
+.tactic-info-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid #222222;
+  padding: 16px 20px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.tactic-info-title {
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #ffffff;
+}
+
+.tactic-info-desc {
+  font-size: 0.74rem;
+  color: var(--color-text-dim);
+  line-height: 1.4;
+}
+
