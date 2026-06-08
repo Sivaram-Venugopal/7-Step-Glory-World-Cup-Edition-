@@ -374,6 +374,9 @@ export default function App() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [expandedRunId, setExpandedRunId] = useState(null);
 
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [pendingExitAction, setPendingExitAction] = useState(null);
+
   // Supabase & Local Session Hooks
   useEffect(() => {
     // Check local storage manager profile first
@@ -755,10 +758,8 @@ export default function App() {
       // Restore dummy state immediately to block navigation
       window.history.pushState({ inRoom: true }, '');
 
-      const confirmLeave = window.confirm("Are you sure you want to exit the current game?");
-      if (confirmLeave) {
-        handleLeaveRoom();
-      }
+      setPendingExitAction(() => () => handleLeaveRoom());
+      setShowExitConfirm(true);
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -1024,6 +1025,59 @@ export default function App() {
     return running;
   };
 
+  const renderExitConfirmModal = () => {
+    if (!showExitConfirm) return null;
+    return (
+      <div className="retro-popup-overlay" style={{
+        position: 'fixed',
+        top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.85)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 99999,
+        padding: '20px'
+      }}>
+        <div className="dashboard-panel max-w-sm text-center space-y-6" style={{ border: '2px solid #ffffff' }}>
+          <div className="flex justify-center" style={{ color: '#ffffff' }}>
+            <AlertCircle size={48} />
+          </div>
+          <div className="space-y-2">
+            <h3 className="logo-heading" style={{ fontSize: '1.4rem' }}>LEAVE GAME?</h3>
+            <p className="text-xs" style={{ color: 'var(--color-text-dim)', lineHeight: '1.4' }}>
+              Are you sure you want to exit the current game session? All unsaved draft progress will be lost.
+            </p>
+          </div>
+          <div className="flex gap-4">
+            <button 
+              onClick={() => {
+                setShowExitConfirm(false);
+                setPendingExitAction(null);
+              }}
+              className="btn-sports-secondary w-full"
+              style={{ fontSize: '0.75rem', padding: '10px' }}
+            >
+              Stay
+            </button>
+            <button 
+              onClick={() => {
+                if (pendingExitAction) {
+                  pendingExitAction();
+                }
+                setShowExitConfirm(false);
+                setPendingExitAction(null);
+              }}
+              className="btn-sports w-full"
+              style={{ fontSize: '0.75rem', padding: '10px', background: '#ffffff', color: '#000000' }}
+            >
+              Exit
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   if (introState !== 'done') {
     return (
       <div className={`intro-overlay ${introState === 'fading' ? 'fade-out' : ''}`}>
@@ -1266,28 +1320,32 @@ export default function App() {
   // Render Lobby screen
   if (room.status === 'lobby') {
     return (
-      <div className="max-w-6xl p-6 lobby-grid">
-        <div className="dashboard-panel space-y-6">
-          <div className="flex justify-between items-center border-b pb-4">
-            <div>
-              <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Lobby Code</p>
-              <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>{room.roomId}</h2>
+      <>
+        <div className="max-w-6xl p-6 lobby-grid">
+          <div className="dashboard-panel space-y-6">
+            <div className="flex justify-between items-center border-b pb-4">
+              <div>
+                <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Lobby Code</p>
+                <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>{room.roomId}</h2>
+              </div>
+              <div className="flex gap-3 items-center">
+                {room.isSinglePlayer ? (
+                  <span className="alert-box text-xs" style={{ padding: '6px 12px' }}>CAMPAIGN (48-TEAM STAGE)</span>
+                ) : (
+                  <span className="alert-box alert-box-amber text-xs" style={{ padding: '6px 12px' }}>MULTIPLAYER DUEL</span>
+                )}
+                <button 
+                  onClick={() => {
+                    setPendingExitAction(() => () => handleLeaveRoom());
+                    setShowExitConfirm(true);
+                  }} 
+                  className="btn-sports-secondary" 
+                  style={{ padding: '6px 12px', fontSize: '0.7rem' }}
+                >
+                  Exit Lobby
+                </button>
+              </div>
             </div>
-            <div className="flex gap-3 items-center">
-              {room.isSinglePlayer ? (
-                <span className="alert-box text-xs" style={{ padding: '6px 12px' }}>CAMPAIGN (48-TEAM STAGE)</span>
-              ) : (
-                <span className="alert-box alert-box-amber text-xs" style={{ padding: '6px 12px' }}>MULTIPLAYER DUEL</span>
-              )}
-              <button 
-                onClick={handleLeaveRoom} 
-                className="btn-sports-secondary" 
-                style={{ padding: '6px 12px', fontSize: '0.7rem' }}
-              >
-                Exit Lobby
-              </button>
-            </div>
-          </div>
 
           <div className="space-y-4">
             <h3 className="text-sm uppercase font-bold flex items-center gap-2">
@@ -1415,39 +1473,41 @@ export default function App() {
           </div>
         </div>
       </div>
+      {renderExitConfirmModal()}
+      </>
     );
   }
 
   // Render Drafting Phase
   if (room.status === 'drafting') {
     return (
-      <div className="max-w-6xl p-6 draft-grid">
-        <div className="dashboard-panel space-y-6">
-          <div className="flex justify-between items-center border-b pb-4">
-            <div>
-              <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Draft Round {room.draftRound} of 15</p>
-              <h2 className="text-lg font-bold">Draft Player or Manager</h2>
-            </div>
-            <div className="text-right flex items-center gap-4">
+      <>
+        <div className="max-w-6xl p-6 draft-grid">
+          <div className="dashboard-panel space-y-6">
+            <div className="flex justify-between items-center border-b pb-4">
               <div>
-                <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Spun Nation</p>
-                <p className="font-extrabold text-white text-md">
-                  {room.spunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
-                </p>
+                <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Draft Round {room.draftRound} of 15</p>
+                <h2 className="text-lg font-bold">Draft Player or Manager</h2>
               </div>
-              <button 
-                onClick={() => {
-                  if (window.confirm("Are you sure you want to exit the current draft session?")) {
-                    handleLeaveRoom();
-                  }
-                }} 
-                className="btn-sports-secondary" 
-                style={{ padding: '6px 12px', fontSize: '0.7rem' }}
-              >
-                Exit Game
-              </button>
+              <div className="text-right flex items-center gap-4">
+                <div>
+                  <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Spun Nation</p>
+                  <p className="font-extrabold text-white text-md">
+                    {room.spunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => {
+                    setPendingExitAction(() => () => handleLeaveRoom());
+                    setShowExitConfirm(true);
+                  }} 
+                  className="btn-sports-secondary" 
+                  style={{ padding: '6px 12px', fontSize: '0.7rem' }}
+                >
+                  Exit Game
+                </button>
+              </div>
             </div>
-          </div>
 
           {!draftData ? (
             <div className="matrix-spinner-box">
@@ -1708,6 +1768,8 @@ export default function App() {
           )}
         </div>
       </div>
+      {renderExitConfirmModal()}
+      </>
     );
   }
 
@@ -1726,58 +1788,58 @@ export default function App() {
     const groups = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
 
     return (
-      <div className="max-w-6xl p-6 space-y-8">
-        
-        {/* Header Campaign Banner */}
-        <div className="dashboard-panel flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '16px' }}>
-          <div>
-            <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>FIFA World Cup Campaign 2026</p>
-            <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>
-              {hasFinished 
-                ? (wonCup ? "🏆 WORLD CHAMPION!" : "💀 GAME OVER") 
-                : `STAGE RUN: MATCH ${room.matchesPlayed + 1} OF 8`
-              }
-            </h2>
-            <p className="text-xs font-bold" style={{ color: 'var(--color-gold)', marginTop: '4px' }}>
-              {hasFinished ? (wonCup ? "YOU HAVE CONQUERED THE WORLD CUP!" : "KNOCKED OUT OF TOURNAMENT") : (
-                room.matchesPlayed < 3 
-                  ? `GROUP STAGE MATCH - GROUP A`
-                  : room.matchesPlayed === 3 ? "ROUND OF 32 (GAME 4)"
-                  : room.matchesPlayed === 4 ? "ROUND OF 16 (GAME 5)"
-                  : room.matchesPlayed === 5 ? "QUARTERFINAL (GAME 6)"
-                  : room.matchesPlayed === 6 ? "SEMIFINAL (GAME 7)" : "THE WORLD CUP FINAL (GAME 8)"
-              )}
-            </p>
-          </div>
-
-          <div className="flex gap-4 items-center">
-            <div className="flex gap-2">
-              {room.matchesHistory.map((h, idx) => {
-                const won = h.scoreA > h.scoreB;
-                const draw = h.scoreA === h.scoreB;
-                return (
-                  <div 
-                    key={idx} 
-                    className={`result-bubble ${won ? 'badge-win' : draw ? 'badge-draw' : 'badge-loss'}`}
-                  >
-                    {won ? 'W' : draw ? 'D' : 'L'}
-                  </div>
-                );
-              })}
-            </div>
-            <button 
-              onClick={() => {
-                if (window.confirm("Are you sure you want to exit the current tournament run?")) {
-                  handleLeaveRoom();
+      <>
+        <div className="max-w-6xl p-6 space-y-8">
+          
+          {/* Header Campaign Banner */}
+          <div className="dashboard-panel flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '16px' }}>
+            <div>
+              <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>FIFA World Cup Campaign 2026</p>
+              <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>
+                {hasFinished 
+                  ? (wonCup ? "🏆 WORLD CHAMPION!" : "💀 GAME OVER") 
+                  : `STAGE RUN: MATCH ${room.matchesPlayed + 1} OF 8`
                 }
-              }} 
-              className="btn-sports-secondary" 
-              style={{ padding: '6px 12px', fontSize: '0.7rem' }}
-            >
-              Exit Tournament
-            </button>
+              </h2>
+              <p className="text-xs font-bold" style={{ color: 'var(--color-gold)', marginTop: '4px' }}>
+                {hasFinished ? (wonCup ? "YOU HAVE CONQUERED THE WORLD CUP!" : "KNOCKED OUT OF TOURNAMENT") : (
+                  room.matchesPlayed < 3 
+                    ? `GROUP STAGE MATCH - GROUP A`
+                    : room.matchesPlayed === 3 ? "ROUND OF 32 (GAME 4)"
+                    : room.matchesPlayed === 4 ? "ROUND OF 16 (GAME 5)"
+                    : room.matchesPlayed === 5 ? "QUARTERFINAL (GAME 6)"
+                    : room.matchesPlayed === 6 ? "SEMIFINAL (GAME 7)" : "THE WORLD CUP FINAL (GAME 8)"
+                )}
+              </p>
+            </div>
+
+            <div className="flex gap-4 items-center">
+              <div className="flex gap-2">
+                {room.matchesHistory.map((h, idx) => {
+                  const won = h.scoreA > h.scoreB;
+                  const draw = h.scoreA === h.scoreB;
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`result-bubble ${won ? 'badge-win' : draw ? 'badge-draw' : 'badge-loss'}`}
+                    >
+                      {won ? 'W' : draw ? 'D' : 'L'}
+                    </div>
+                  );
+                })}
+              </div>
+              <button 
+                onClick={() => {
+                  setPendingExitAction(() => () => handleLeaveRoom());
+                  setShowExitConfirm(true);
+                }} 
+                className="btn-sports-secondary" 
+                style={{ padding: '6px 12px', fontSize: '0.7rem' }}
+              >
+                Exit Tournament
+              </button>
+            </div>
           </div>
-        </div>
 
         {/* Dashboard Tabs Toggle */}
         <div className="tab-row">
@@ -2394,6 +2456,8 @@ export default function App() {
           </div>
         )}
       </div>
+      {renderExitConfirmModal()}
+      </>
     );
   }
 
