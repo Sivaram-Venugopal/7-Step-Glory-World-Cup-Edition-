@@ -1544,3 +1544,142 @@ select.sports-input option {
   line-height: 1.4;
 }
 
+/* Custom Polish: Exit confirmation panel (compact size) */
+.exit-confirm-panel {
+  background: var(--bg-card);
+  border: 2px solid #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+  padding: 16px 20px;
+  width: 100%;
+  max-width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Custom Polish: Manager Board Card (Comfortable padding and badges) */
+.manager-board-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid #222222;
+  padding: 14px 18px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.manager-board-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #ffffff;
+  font-family: 'Cinzel', serif;
+}
+
+.manager-board-boost {
+  font-size: 0.72rem;
+  color: var(--color-gold);
+  font-family: 'Share Tech Mono', monospace;
+  background: #111111;
+  border: 1px solid #333333;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+/* Custom Polish: Scouting Report Power Ratings Grid */
+.scouting-power-box {
+  background: #090909;
+  border: 1px solid #222222;
+  border-radius: 8px;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scouting-power-title {
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #ffffff;
+  text-align: center;
+  border-bottom: 1px solid #1a1a1a;
+  padding-bottom: 8px;
+}
+
+.scouting-power-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  text-align: center;
+}
+
+.scouting-power-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--color-text-dim);
+}
+
+.scouting-power-value {
+  font-size: 1.1rem;
+  font-weight: 900;
+  color: #ffffff;
+}
+
+/* Custom Polish: smooth card hover tooltip showing stats */
+.fut-card-tooltip {
+  position: absolute;
+  bottom: 108%;
+  left: 50%;
+  transform: translate(-50%, 8px);
+  background: #090909;
+  border: 2px solid #ffffff;
+  border-radius: 8px;
+  padding: 10px;
+  width: 130px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.85);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s cubic-bezier(0.165, 0.84, 0.44, 1), transform 0.25s cubic-bezier(0.165, 0.84, 0.44, 1);
+  z-index: 999999;
+}
+
+.fut-card-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 6px;
+  border-style: solid;
+  border-color: #ffffff transparent transparent transparent;
+}
+
+.fut-card:hover .fut-card-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+
+.tooltip-stat {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.62rem;
+  color: #888888;
+}
+
+.tooltip-stat span {
+  color: #ffffff;
+  font-weight: bold;
+}
+

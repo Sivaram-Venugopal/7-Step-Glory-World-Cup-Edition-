@@ -1038,24 +1038,24 @@ export default function App() {
         zIndex: 99999,
         padding: '20px'
       }}>
-        <div className="dashboard-panel max-w-sm text-center space-y-6" style={{ border: '2px solid #ffffff' }}>
+        <div className="exit-confirm-panel text-center">
           <div className="flex justify-center" style={{ color: '#ffffff' }}>
-            <AlertCircle size={48} />
+            <AlertCircle size={36} />
           </div>
-          <div className="space-y-2">
-            <h3 className="logo-heading" style={{ fontSize: '1.4rem' }}>LEAVE GAME?</h3>
-            <p className="text-xs" style={{ color: 'var(--color-text-dim)', lineHeight: '1.4' }}>
-              Are you sure you want to exit the current game session? All unsaved draft progress will be lost.
+          <div className="space-y-1">
+            <h3 className="logo-heading" style={{ fontSize: '1.25rem' }}>LEAVE GAME?</h3>
+            <p className="text-xs" style={{ color: 'var(--color-text-dim)', lineHeight: '1.3' }}>
+              Are you sure you want to exit? All unsaved draft progress will be lost.
             </p>
           </div>
-          <div className="flex gap-4">
+          <div className="flex gap-3">
             <button 
               onClick={() => {
                 setShowExitConfirm(false);
                 setPendingExitAction(null);
               }}
               className="btn-sports-secondary w-full"
-              style={{ fontSize: '0.75rem', padding: '10px' }}
+              style={{ fontSize: '0.72rem', padding: '8px', minWidth: '0' }}
             >
               Stay
             </button>
@@ -1068,7 +1068,7 @@ export default function App() {
                 setPendingExitAction(null);
               }}
               className="btn-sports w-full"
-              style={{ fontSize: '0.75rem', padding: '10px', background: '#ffffff', color: '#000000' }}
+              style={{ fontSize: '0.72rem', padding: '8px', background: '#ffffff', color: '#000000', minWidth: '0' }}
             >
               Exit
             </button>
@@ -1858,9 +1858,9 @@ export default function App() {
               <h3 className="text-sm uppercase font-bold border-b pb-2">Manager Board</h3>
 
               {user.manager && (
-                <div className="p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--color-gold)', fontSize: '0.78rem' }}>
-                  <div className="font-bold text-white">Manager: {user.manager.name} ({user.manager.country})</div>
-                  <div style={{ color: 'var(--color-gold)' }}>Boost: {user.manager.boost}</div>
+                <div className="manager-board-card">
+                  <div className="manager-board-name">Manager: {user.manager.name} ({user.manager.country})</div>
+                  <div className="manager-board-boost">Boost: {user.manager.boost}</div>
                 </div>
               )}
 
@@ -2279,13 +2279,25 @@ export default function App() {
                   {opponent.manager && <p className="text-xs mt-1" style={{ color: 'var(--color-text-dim)' }}>Manager: {opponent.manager.name}</p>}
                   <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Tactic: {opponent.tactic?.toUpperCase()}</p>
                 </div>
-                <div className="p-3" style={{ background: '#000', borderRadius: '8px', border: '1px solid rgba(231, 76, 60, 0.3)' }}>
-                  <div className="font-bold text-center text-md mb-2">POWER RATINGS</div>
-                  <div className="grid-2 text-xs">
-                    <div>OVR: <span className="font-bold text-white">{opponent.stats?.totalOvr}</span></div>
-                    <div>ATT: <span className="font-bold text-white">{opponent.stats?.att}</span></div>
-                    <div>MID: <span className="font-bold text-white">{opponent.stats?.mid}</span></div>
-                    <div>DEF: <span className="font-bold text-white">{opponent.stats?.def}</span></div>
+                <div className="scouting-power-box">
+                  <div className="scouting-power-title">POWER RATINGS</div>
+                  <div className="scouting-power-grid">
+                    <div className="scouting-power-item">
+                      OVR
+                      <span className="scouting-power-value">{opponent.stats?.totalOvr}</span>
+                    </div>
+                    <div className="scouting-power-item">
+                      ATT
+                      <span className="scouting-power-value">{opponent.stats?.att}</span>
+                    </div>
+                    <div className="scouting-power-item">
+                      MID
+                      <span className="scouting-power-value">{opponent.stats?.mid}</span>
+                    </div>
+                    <div className="scouting-power-item">
+                      DEF
+                      <span className="scouting-power-value">{opponent.stats?.def}</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2311,11 +2323,20 @@ export default function App() {
                           alignItems: 'center',
                           justifyContent: 'space-between',
                           boxShadow: '0 4px 8px rgba(0,0,0,0.4)',
-                          color: '#0c210d',
                           cursor: 'default',
                           transform: 'none'
                         }}
                       >
+                        {/* Custom Hover Tooltip Pop-up */}
+                        <div className="fut-card-tooltip">
+                          <div className="tooltip-stat"><span>PAC</span> {p.stats?.pace || 50}</div>
+                          <div className="tooltip-stat"><span>SHO</span> {p.stats?.shooting || 50}</div>
+                          <div className="tooltip-stat"><span>PAS</span> {p.stats?.passing || 50}</div>
+                          <div className="tooltip-stat"><span>DRI</span> {p.stats?.dribbling || 50}</div>
+                          <div className="tooltip-stat"><span>DEF</span> {p.stats?.defending || 50}</div>
+                          <div className="tooltip-stat"><span>PHY</span> {p.stats?.physical || 50}</div>
+                        </div>
+
                         <div className="flex justify-between w-full" style={{ fontSize: '0.65rem', fontWeight: 900, lineHeight: 1 }}>
                           <span>{p.rating}</span>
                           <span>{p.position}</span>
@@ -2323,7 +2344,7 @@ export default function App() {
                         <div style={{ margin: '2px 0' }}>
                           {renderJerseySVG(p.teamId || opponent.manager?.country, getInitials(p.name), 30)}
                         </div>
-                        <span className="font-bold text-center" style={{ width: '100%', fontSize: '0.62rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderBottom: '1px solid rgba(0,0,0,0.1)', paddingBottom: '2px' }}>
+                        <span className="font-bold text-center" style={{ width: '100%', fontSize: '0.62rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '2px' }}>
                           {p.name.split(' ').pop()}
                         </span>
                         <span style={{ fontSize: '0.48rem', opacity: 0.7, textTransform: 'uppercase', fontWeight: 800 }}>
