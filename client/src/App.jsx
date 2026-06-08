@@ -301,6 +301,16 @@ export default function App() {
   const [screenLoading, setScreenLoading] = useState(false);
   const [loadingText, setLoadingText] = useState('LOADING SYSTEM...');
 
+  const [landingSubmenu, setLandingSubmenu] = useState("MAIN"); // MAIN, MULTIPLAYER_CHOOSE, LOCAL_LOBBY, GLOBAL_MATCHMAKING
+  const [activeRooms, setActiveRooms] = useState([]);
+  const [globalLeaderboard, setGlobalLeaderboard] = useState([]);
+  const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
+  const playerNameRef = useRef('');
+
+  useEffect(() => {
+    playerNameRef.current = playerName;
+  }, [playerName]);
+
   useEffect(() => {
     const timer1 = setTimeout(() => {
       setIntroState('fading');
@@ -683,6 +693,18 @@ export default function App() {
   };
 
   const saveMatchToSupabase = async (matchDetails, roomState) => {
+    // Local storage leaderboard fallback
+    const wonCup = roomState.status === 'finished' && matchDetails.matchNum >= 8 && (matchDetails.scoreA > matchDetails.scoreB);
+    if (wonCup && playerName) {
+      try {
+        const localLeaderboard = JSON.parse(localStorage.getItem('local_leaderboard_stats') || '{}');
+        localLeaderboard[playerName] = (localLeaderboard[playerName] || 0) + 1;
+        localStorage.setItem('local_leaderboard_stats', JSON.stringify(localLeaderboard));
+      } catch (e) {
+        console.warn("Local storage error:", e);
+      }
+    }
+
     if (!supabase || !user || !supabaseTournamentId) return;
 
     try {
@@ -850,6 +872,23 @@ export default function App() {
       setSearchQuery(''); // Reset search text
     });
 
+    s.on('global_queued', () => {
+      setLandingSubmenu("GLOBAL_MATCHMAKING");
+    });
+
+    s.on('global_matched', ({ roomId, isHost }) => {
+      s.emit('join_room', { roomId, playerName: playerNameRef.current, isHost, isSinglePlayer: false });
+      setLandingSubmenu("MAIN");
+    });
+
+    s.on('global_left', () => {
+      setLandingSubmenu("MULTIPLAYER_CHOOSE");
+    });
+
+    s.on('local_rooms_list', (roomsList) => {
+      setActiveRooms(roomsList);
+    });
+
     s.on('match_simulated', ({ matchDetails, roomState }) => {
       setSimDetails(matchDetails);
       setVisibleEvents([]);
@@ -993,6 +1032,7 @@ export default function App() {
     setSimulationActive(false);
     setSimDetails(null);
     setSupabaseTournamentId(null);
+    setLandingSubmenu("MAIN");
   };
 
   // Actions
@@ -1031,6 +1071,88 @@ export default function App() {
       socket.emit('join_room', { roomId: rId, playerName, isHost: true, isSinglePlayer: true });
       setScreenLoading(false);
     }, 600);
+  };
+
+  const fetchGlobalLeaderboard = async () => {
+    setLoadingLeaderboard(true);
+    if (supabase && isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase
+          .from('tournaments')
+          .select('user_name')
+          .eq('won_cup', true);
+
+        if (error) throw error;
+
+        const winsMap = {};
+        data.forEach(t => {
+          const name = t.user_name || "Guest";
+          winsMap[name] = (winsMap[name] || 0) + 1;
+        });
+
+        const sorted = Object.entries(winsMap)
+          .map(([username, wins]) => ({ username, wins }))
+          .sort((a, b) => b.wins - a.wins)
+          .slice(0, 10);
+
+        setGlobalLeaderboard(sorted);
+      } catch (err) {
+        console.error("Error fetching leaderboard:", err.message);
+      } finally {
+        setLoadingLeaderboard(false);
+      }
+    } else {
+      try {
+        const savedStats = localStorage.getItem('local_leaderboard_stats') || '{}';
+        const stats = JSON.parse(savedStats);
+        const sorted = Object.entries(stats)
+          .map(([username, wins]) => ({ username, wins }))
+          .sort((a, b) => b.wins - a.wins)
+          .slice(0, 10);
+        setGlobalLeaderboard(sorted);
+      } catch (e) {
+        console.warn(e);
+      } finally {
+        setLoadingLeaderboard(false);
+      }
+    }
+  };
+
+  const handleStartGlobalMatchmaking = () => {
+    if (socket && playerName) {
+      socket.emit('join_global', { playerName });
+      fetchGlobalLeaderboard();
+    }
+  };
+
+  const handleCancelGlobalMatchmaking = () => {
+    if (socket) {
+      socket.emit('leave_global');
+    }
+  };
+
+  const handleJoinActiveRoom = (rId) => {
+    if (!playerName) return;
+    setRoomId(rId);
+    socket.emit('join_room', { roomId: rId, playerName, isHost: false, isSinglePlayer: false });
+  };
+
+  const handleExitClick = () => {
+    const isMultiplayerActive = room && !room.isSinglePlayer && room.status !== 'finished' && room.status !== 'lobby';
+    if (isMultiplayerActive) {
+      setPendingExitAction(() => () => handleConfirmForfeit());
+    } else {
+      setPendingExitAction(() => () => handleLeaveRoom());
+    }
+    setShowExitConfirm(true);
+  };
+
+  const handleConfirmForfeit = () => {
+    if (room && socket) {
+      socket.emit('forfeit_game', { roomId: room.roomId });
+      socket.emit('leave_room', { roomId: room.roomId });
+    }
+    handleLeaveRoom();
   };
 
   const handleUpdateSettings = (formation, tactic, teamName) => {
@@ -1172,6 +1294,7 @@ export default function App() {
 
   const renderExitConfirmModal = () => {
     if (!showExitConfirm) return null;
+    const isMultiplayerActive = room && !room.isSinglePlayer && room.status !== 'finished' && room.status !== 'lobby';
     return (
       <div className="retro-popup-overlay" style={{
         position: 'fixed',
@@ -1183,14 +1306,18 @@ export default function App() {
         zIndex: 99999,
         padding: '20px'
       }}>
-        <div className="exit-confirm-panel text-center">
-          <div className="flex justify-center" style={{ color: '#ffffff' }}>
+        <div className="exit-confirm-panel text-center" style={isMultiplayerActive ? { borderColor: '#c0392b' } : {}}>
+          <div className="flex justify-center" style={{ color: isMultiplayerActive ? '#c0392b' : '#ffffff' }}>
             <AlertCircle size={36} />
           </div>
           <div className="space-y-1">
-            <h3 className="logo-heading" style={{ fontSize: '1.25rem' }}>LEAVE GAME?</h3>
+            <h3 className="logo-heading" style={{ fontSize: '1.25rem', color: isMultiplayerActive ? '#c0392b' : 'inherit' }}>
+              {isMultiplayerActive ? 'FORFEIT MATCH?' : 'LEAVE GAME?'}
+            </h3>
             <p className="text-xs" style={{ color: 'var(--color-text-dim)', lineHeight: '1.3' }}>
-              Are you sure you want to exit? All unsaved draft progress will be lost.
+              {isMultiplayerActive 
+                ? 'Leaving will result in an immediate 3-0 forfeit loss. Are you sure you want to exit?' 
+                : 'Are you sure you want to exit? All unsaved draft progress will be lost.'}
             </p>
           </div>
           <div className="flex gap-3">
@@ -1213,9 +1340,16 @@ export default function App() {
                 setPendingExitAction(null);
               }}
               className="btn-sports w-full"
-              style={{ fontSize: '0.72rem', padding: '8px', background: '#ffffff', color: '#000000', minWidth: '0' }}
+              style={{ 
+                fontSize: '0.72rem', 
+                padding: '8px', 
+                background: isMultiplayerActive ? '#c0392b' : '#ffffff', 
+                color: isMultiplayerActive ? '#ffffff' : '#000000', 
+                border: isMultiplayerActive ? '1px solid #c0392b' : '1px solid #ffffff',
+                minWidth: '0' 
+              }}
             >
-              Exit
+              {isMultiplayerActive ? 'Forfeit & Exit' : 'Exit'}
             </button>
           </div>
         </div>
@@ -1431,41 +1565,182 @@ export default function App() {
             </div>
 
             <div className="pt-4 border-t space-y-4">
-              <button 
-                onClick={handleSinglePlayer}
-                disabled={!playerName}
-                className="btn-sports w-full"
-              >
-                <Sparkles size={18} /> Play Campaign (VS AI)
-              </button>
-
-              <div className="text-center text-xs" style={{ color: 'var(--color-text-dim)' }}>— OR CREATE MULTIPLAYER DUEL —</div>
-
-              <div className="grid-2">
-                <button 
-                  onClick={handleCreateRoom}
-                  disabled={!playerName}
-                  className="btn-sports-secondary"
-                >
-                  Create
-                </button>
-                <div style={{ position: 'relative' }}>
-                  <input 
-                    type="text" 
-                    placeholder="Lobby Code" 
-                    value={roomId} 
-                    onChange={e => setRoomId(e.target.value)}
-                    className="sports-input text-center uppercase" 
-                  />
+              {landingSubmenu === "MAIN" && (
+                <>
                   <button 
-                    onClick={handleJoinRoom}
-                    disabled={!playerName || !roomId}
-                    className="lobby-arrow-btn"
+                    onClick={handleSinglePlayer}
+                    disabled={!playerName}
+                    className="btn-sports w-full"
                   >
-                    <ArrowRight size={18} />
+                    <Sparkles size={18} /> Play Campaign (VS AI)
+                  </button>
+
+                  <button 
+                    onClick={() => setLandingSubmenu("MULTIPLAYER_CHOOSE")}
+                    disabled={!playerName}
+                    className="btn-sports w-full"
+                  >
+                    <Users size={18} /> Multiplayer
+                  </button>
+                </>
+              )}
+
+              {landingSubmenu === "MULTIPLAYER_CHOOSE" && (
+                <div className="space-y-4">
+                  <div className="text-center text-xs" style={{ color: 'var(--color-text-dim)', fontWeight: 'bold' }}>SELECT HOSTING TYPE</div>
+                  
+                  <button 
+                    onClick={() => {
+                      setLandingSubmenu("LOCAL_LOBBY");
+                      if (socket) socket.emit('get_local_rooms');
+                    }}
+                    className="btn-sports w-full"
+                  >
+                    Local Hosting
+                  </button>
+
+                  <button 
+                    onClick={handleStartGlobalMatchmaking}
+                    className="btn-sports w-full animate-pulse"
+                  >
+                    Global Join
+                  </button>
+
+                  <button 
+                    onClick={() => setLandingSubmenu("MAIN")}
+                    className="btn-sports-secondary w-full"
+                  >
+                    Back
                   </button>
                 </div>
-              </div>
+              )}
+
+              {landingSubmenu === "GLOBAL_MATCHMAKING" && (
+                <div className="space-y-4 text-center">
+                  <div className="text-sm font-bold uppercase animate-pulse" style={{ color: 'var(--color-gold)' }}>
+                    Searching for Opponent...
+                  </div>
+                  <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>
+                    Connecting you to random players around the globe.
+                  </p>
+                  <div className="matrix-spinner-box" style={{ border: 'none', background: 'transparent', minHeight: 'auto', padding: '10px' }}>
+                    <div className="matrix-spinner-reel" style={{ fontSize: '1rem' }}>SEARCHING GLOBALLY...</div>
+                  </div>
+
+                  {/* Global leaderboard */}
+                  <div className="border-t pt-3 mt-4 text-left">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-2">Global Leaderboard (Most Wins)</span>
+                    <div className="space-y-1 max-h-48 overflow-y-auto" style={{ border: '1px solid rgba(255,255,255,0.05)', padding: '6px', borderRadius: '4px', background: '#050505' }}>
+                      {loadingLeaderboard ? (
+                        <div className="text-[10px] text-center text-slate-500 py-3 animate-pulse">LOADING LEADERBOARD...</div>
+                      ) : globalLeaderboard.length === 0 ? (
+                        <div className="text-[10px] text-center text-slate-500 py-3">No champion managers found yet. Be the first!</div>
+                      ) : (
+                        <table className="retro-table" style={{ fontSize: '9px', margin: 0 }}>
+                          <thead>
+                            <tr>
+                              <th style={{ padding: '2px 4px' }}>RANK</th>
+                              <th style={{ padding: '2px 4px', textAlign: 'left' }}>MANAGER</th>
+                              <th style={{ padding: '2px 4px', textAlign: 'right' }}>CUP WINS</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {globalLeaderboard.map((m, mIdx) => (
+                              <tr key={mIdx} className={m.username === playerName ? 'active-row' : ''}>
+                                <td style={{ padding: '2px 4px' }}>{mIdx + 1}</td>
+                                <td style={{ padding: '2px 4px', textAlign: 'left', fontWeight: 'bold' }}>{m.username}</td>
+                                <td style={{ padding: '2px 4px', textAlign: 'right', color: 'var(--color-gold)', fontWeight: 'bold' }}>{m.wins}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={handleCancelGlobalMatchmaking}
+                    className="btn-sports-secondary w-full"
+                  >
+                    Cancel Matchmaking
+                  </button>
+                </div>
+              )}
+
+              {landingSubmenu === "LOCAL_LOBBY" && (
+                <div className="space-y-4">
+                  <div className="text-center text-xs" style={{ color: 'var(--color-text-dim)', fontWeight: 'bold' }}>LOCAL ROOM LOBBIES</div>
+                  
+                  <div className="grid-2">
+                    <button 
+                      onClick={handleCreateRoom}
+                      disabled={!playerName}
+                      className="btn-sports-secondary"
+                    >
+                      Create Room
+                    </button>
+                    <div style={{ position: 'relative' }}>
+                      <input 
+                        type="text" 
+                        placeholder="Lobby Code" 
+                        value={roomId} 
+                        onChange={e => setRoomId(e.target.value)}
+                        className="sports-input text-center uppercase" 
+                      />
+                      <button 
+                        onClick={handleJoinRoom}
+                        disabled={!playerName || !roomId}
+                        className="lobby-arrow-btn"
+                      >
+                        <ArrowRight size={18} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Existing creations / local rooms list */}
+                  <div className="border-t pt-3 mt-3 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] uppercase font-bold text-slate-400">Available Local Rooms</span>
+                      <button 
+                        onClick={() => socket && socket.emit('get_local_rooms')} 
+                        className="btn-sports-secondary"
+                        style={{ padding: '2px 8px', fontSize: '9px', width: 'auto' }}
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto" style={{ border: '1px solid rgba(255,255,255,0.05)', padding: '4px', borderRadius: '4px', background: '#050505' }}>
+                      {activeRooms.length === 0 ? (
+                        <div className="text-[10px] text-center text-slate-500 py-3">No active local rooms found. Create one above!</div>
+                      ) : (
+                        activeRooms.map((r, rIdx) => (
+                          <div key={rIdx} className="flex justify-between items-center p-2 rounded" style={{ background: '#0c0c0c', border: '1px solid rgba(255,255,255,0.05)' }}>
+                            <div className="text-left">
+                              <span className="font-extrabold text-[11px] text-white uppercase">{r.roomId}</span>
+                              <span className="text-[9px] text-slate-400 block">Host: {r.hostName} ({r.playersCount}/2)</span>
+                            </div>
+                            <button 
+                              onClick={() => handleJoinActiveRoom(r.roomId)}
+                              className="btn-sports"
+                              style={{ padding: '4px 10px', fontSize: '10px', width: 'auto', background: 'var(--color-green)', color: '#000' }}
+                            >
+                              Join
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={() => setLandingSubmenu("MULTIPLAYER_CHOOSE")}
+                    className="btn-sports-secondary w-full"
+                  >
+                    Back
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1652,7 +1927,7 @@ export default function App() {
             <div className="flex justify-between items-center border-b pb-4">
               <div>
                 <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Draft Round {room.draftRound} of 15</p>
-                <h2 className="text-lg font-bold">Draft Player or Manager</h2>
+                <h2 className="text-lg font-bold" style={{ margin: 0 }}>Draft Player or Manager</h2>
               </div>
               <div className="text-right flex items-center gap-4">
                 <div>
@@ -1662,10 +1937,7 @@ export default function App() {
                   </p>
                 </div>
                 <button 
-                  onClick={() => {
-                    setPendingExitAction(() => () => handleLeaveRoom());
-                    setShowExitConfirm(true);
-                  }} 
+                  onClick={handleExitClick}
                   className="btn-sports-secondary" 
                   style={{ padding: '6px 12px', fontSize: '0.7rem' }}
                 >
@@ -1944,11 +2216,19 @@ export default function App() {
 
   // Render Tournament Dashboard & Statistics
   if (room.status === 'tournament' || room.status === 'finished') {
-    const user = room.players[0];
-    const opponent = room.currentOpponent || room.players[1] || { name: "AI Opponent", stats: { totalOvr: 60, att: 60, mid: 60, def: 60 } };
+    const user = room.players.find(p => p.id === socket?.id) || room.players[0];
+    const opponent = !room.isSinglePlayer 
+      ? (room.players.find(p => p.id !== socket?.id) || room.players[1]) 
+      : (room.currentOpponent || { name: "AI Opponent", stats: { totalOvr: 60, att: 60, mid: 60, def: 60 } });
     
     const hasFinished = room.status === 'finished';
-    const wonCup = hasFinished && room.matchesPlayed >= 8 && (room.matchesHistory[7]?.scoreA > room.matchesHistory[7]?.scoreB);
+    const isP1 = room.players[0]?.id === socket?.id;
+    const lastMatch = room.matchesHistory[room.matchesHistory.length - 1];
+    const wonCup = hasFinished && (
+      room.isSinglePlayer 
+        ? (room.matchesPlayed >= 8 && lastMatch && lastMatch.scoreA > lastMatch.scoreB)
+        : (room.matchesPlayed === 1 && lastMatch && (isP1 ? lastMatch.scoreA > lastMatch.scoreB : lastMatch.scoreB > lastMatch.scoreA))
+    );
 
     const sortedScorers = Object.entries(room.playerStats || {}).map(([name, s]) => ({ name, ...s })).sort((a,b) => b.goals - a.goals);
     const sortedAssisters = Object.entries(room.playerStats || {}).map(([name, s]) => ({ name, ...s })).sort((a,b) => b.assists - a.assists);
@@ -1963,21 +2243,27 @@ export default function App() {
           {/* Header Campaign Banner */}
           <div className="dashboard-panel flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '16px' }}>
             <div>
-              <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>FIFA World Cup Campaign 2026</p>
+              <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>
+                {room.isSinglePlayer ? "FIFA World Cup Campaign 2026" : "Multiplayer Duel Arena"}
+              </p>
               <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>
                 {hasFinished 
-                  ? (wonCup ? "🏆 WORLD CHAMPION!" : "💀 GAME OVER") 
-                  : `STAGE RUN: MATCH ${room.matchesPlayed + 1} OF 8`
+                  ? (wonCup ? "🏆 CHAMPION!" : "💀 DEFEATED") 
+                  : (room.isSinglePlayer 
+                      ? `STAGE RUN: MATCH ${room.matchesPlayed + 1} OF 8` 
+                      : "CHALLENGE MATCH: 1-GAME FINAL")
                 }
               </h2>
               <p className="text-xs font-bold" style={{ color: 'var(--color-gold)', marginTop: '4px' }}>
-                {hasFinished ? (wonCup ? "YOU HAVE CONQUERED THE WORLD CUP!" : "KNOCKED OUT OF TOURNAMENT") : (
-                  room.matchesPlayed < 3 
-                    ? `GROUP STAGE MATCH - GROUP A`
-                    : room.matchesPlayed === 3 ? "ROUND OF 32 (GAME 4)"
-                    : room.matchesPlayed === 4 ? "ROUND OF 16 (GAME 5)"
-                    : room.matchesPlayed === 5 ? "QUARTERFINAL (GAME 6)"
-                    : room.matchesPlayed === 6 ? "SEMIFINAL (GAME 7)" : "THE WORLD CUP FINAL (GAME 8)"
+                {hasFinished ? (wonCup ? "YOU CLAIMED SUPREME GLORY!" : "YOU LOST THE DUEL") : (
+                  room.isSinglePlayer ? (
+                    room.matchesPlayed < 3 
+                      ? `GROUP STAGE MATCH - GROUP A`
+                      : room.matchesPlayed === 3 ? "ROUND of 32 (GAME 4)"
+                      : room.matchesPlayed === 4 ? "ROUND OF 16 (GAME 5)"
+                      : room.matchesPlayed === 5 ? "QUARTERFINAL (GAME 6)"
+                      : room.matchesPlayed === 6 ? "SEMIFINAL (GAME 7)" : "THE WORLD CUP FINAL (GAME 8)"
+                  ) : "DEFEAT YOUR OPPONENT TO CLAIM BRAGGING RIGHTS!"
                 )}
               </p>
             </div>
@@ -1997,16 +2283,23 @@ export default function App() {
                   );
                 })}
               </div>
-              <button 
-                onClick={() => {
-                  setPendingExitAction(() => () => handleLeaveRoom());
-                  setShowExitConfirm(true);
-                }} 
-                className="btn-sports-secondary" 
-                style={{ padding: '6px 12px', fontSize: '0.7rem' }}
-              >
-                Exit Tournament
-              </button>
+              {!hasFinished ? (
+                <button 
+                  onClick={handleExitClick}
+                  className="btn-sports"
+                  style={{ padding: '6px 12px', background: '#c0392b', color: '#fff', border: 'none', width: 'auto', fontSize: '0.75rem', height: 'fit-content' }}
+                >
+                  Leave Game
+                </button>
+              ) : (
+                <button 
+                  onClick={handleLeaveRoom}
+                  className="btn-sports-secondary"
+                  style={{ padding: '6px 12px', width: 'auto', fontSize: '0.75rem', height: 'fit-content' }}
+                >
+                  Exit to Menu
+                </button>
+              )}
             </div>
           </div>
 

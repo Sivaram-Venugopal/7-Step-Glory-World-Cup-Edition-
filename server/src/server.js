@@ -28,6 +28,7 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 5000;
 
 const rooms = {};
+let globalQueue = [];
 
 const TEAM_TIERS = {
   big: [
@@ -300,17 +301,147 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('room_update', getSanitizedRoom(room));
   });
 
-  // Disconnect
-  socket.on('disconnect', () => {
-    for (let roomId in rooms) {
-      const room = rooms[roomId];
+  // Get active local rooms
+  socket.on('get_local_rooms', () => {
+    const activeRooms = Object.values(rooms)
+      .filter(r => !r.isSinglePlayer && r.status === 'lobby')
+      .map(r => ({
+        roomId: r.roomId,
+        playersCount: r.players.length,
+        hostName: r.players.find(p => p.isHost)?.name || "Unknown"
+      }));
+    socket.emit('local_rooms_list', activeRooms);
+  });
+
+  // Leave Room
+  socket.on('leave_room', ({ roomId }) => {
+    socket.leave(roomId);
+    const room = rooms[roomId];
+    if (room) {
       const playerIdx = room.players.findIndex(p => p.id === socket.id);
       if (playerIdx !== -1) {
+        const leavingPlayer = room.players[playerIdx];
         room.players.splice(playerIdx, 1);
         if (room.players.length === 0) {
           delete rooms[roomId];
           console.log(`Lobby ${roomId} closed.`);
         } else {
+          if ((room.status === 'drafting' || room.status === 'tournament') && !room.isSinglePlayer) {
+            const remainingPlayer = room.players[0];
+            const forfeitMatch = {
+              matchNum: room.matchesPlayed + 1,
+              teamAName: remainingPlayer.teamName || remainingPlayer.name,
+              teamBName: leavingPlayer.teamName || leavingPlayer.name,
+              scoreA: 3,
+              scoreB: 0,
+              events: [{ time: 90, type: 'whistle', text: `${leavingPlayer.name} has left the game. ${remainingPlayer.name} wins by default!` }]
+            };
+            room.matchesHistory.push(forfeitMatch);
+            room.status = 'finished';
+          }
+          io.to(roomId).emit('room_update', getSanitizedRoom(room));
+        }
+      }
+    }
+  });
+
+  // Global Matchmaking Join
+  socket.on('join_global', ({ playerName }) => {
+    console.log(`Global matchmaking requested by ${playerName} (${socket.id})`);
+
+    // Clean up disconnected sockets from the queue
+    globalQueue = globalQueue.filter(s => io.sockets.sockets.has(s.id));
+
+    // Prevent duplicate entries
+    if (globalQueue.find(s => s.id === socket.id)) return;
+
+    if (globalQueue.length > 0) {
+      const opponentSocket = globalQueue.shift();
+      const roomId = "GLBL-" + Math.random().toString(36).substring(2, 6).toUpperCase();
+
+      console.log(`Global pair found! Creating room: ${roomId}`);
+
+      // Emit to both sockets to join the newly created global room
+      opponentSocket.emit('global_matched', { roomId, isHost: true });
+      socket.emit('global_matched', { roomId, isHost: false });
+    } else {
+      // Put in queue
+      socket.playerName = playerName;
+      globalQueue.push(socket);
+      socket.emit('global_queued');
+    }
+  });
+
+  // Cancel global matchmaking
+  socket.on('leave_global', () => {
+    globalQueue = globalQueue.filter(s => s.id !== socket.id);
+    socket.emit('global_left');
+  });
+
+  // Forfeit game
+  socket.on('forfeit_game', ({ roomId }) => {
+    const room = rooms[roomId];
+    if (!room) return;
+
+    console.log(`Forfeit requested in room ${roomId} by socket ${socket.id}`);
+
+    if (!room.isSinglePlayer && room.players.length > 1) {
+      const leavingPlayer = room.players.find(p => p.id === socket.id);
+      const remainingPlayer = room.players.find(p => p.id !== socket.id);
+
+      if (leavingPlayer && remainingPlayer) {
+        const forfeitMatch = {
+          matchNum: room.matchesPlayed + 1,
+          teamAName: remainingPlayer.teamName || remainingPlayer.name,
+          teamBName: leavingPlayer.teamName || leavingPlayer.name,
+          teamAStats: { totalOvr: remainingPlayer.stats?.totalOvr || 75, tactic: remainingPlayer.tactic, formation: remainingPlayer.formation },
+          teamBStats: { totalOvr: leavingPlayer.stats?.totalOvr || 75, tactic: leavingPlayer.tactic, formation: leavingPlayer.formation },
+          scoreA: 3,
+          scoreB: 0,
+          events: [{ time: 90, type: 'whistle', text: `${leavingPlayer.name} has forfeited the match. ${remainingPlayer.name} wins by default!` }],
+          opponentSquad: leavingPlayer.squad,
+          opponentManager: leavingPlayer.manager,
+          opponentStats: leavingPlayer.stats
+        };
+        room.matchesHistory.push(forfeitMatch);
+        room.status = 'finished';
+        io.to(room.roomId).emit('room_update', getSanitizedRoom(room));
+      }
+    } else {
+      room.status = 'finished';
+      io.to(room.roomId).emit('room_update', getSanitizedRoom(room));
+    }
+  });
+
+  // Disconnect
+  socket.on('disconnect', () => {
+    // Global queue cleanup
+    globalQueue = globalQueue.filter(s => s.id !== socket.id);
+
+    for (let roomId in rooms) {
+      const room = rooms[roomId];
+      const playerIdx = room.players.findIndex(p => p.id === socket.id);
+      if (playerIdx !== -1) {
+        const leavingPlayer = room.players[playerIdx];
+        room.players.splice(playerIdx, 1);
+        if (room.players.length === 0) {
+          delete rooms[roomId];
+          console.log(`Lobby ${roomId} closed.`);
+        } else {
+          // If the match was in progress, trigger default win for the remaining player
+          if ((room.status === 'drafting' || room.status === 'tournament') && !room.isSinglePlayer) {
+            const remainingPlayer = room.players[0];
+            const forfeitMatch = {
+              matchNum: room.matchesPlayed + 1,
+              teamAName: remainingPlayer.teamName || remainingPlayer.name,
+              teamBName: leavingPlayer.teamName || leavingPlayer.name,
+              scoreA: 3,
+              scoreB: 0,
+              events: [{ time: 90, type: 'whistle', text: `${leavingPlayer.name} disconnected. ${remainingPlayer.name} wins by default!` }]
+            };
+            room.matchesHistory.push(forfeitMatch);
+            room.status = 'finished';
+          }
           io.to(roomId).emit('room_update', getSanitizedRoom(room));
         }
         break;
@@ -570,21 +701,21 @@ function simulateRound(room) {
       roomState: getSanitizedRoom(room)
     });
   } else {
-    // Multiplayer duel simulation
+    // Multiplayer duel simulation (Exactly one game format)
     const p1 = room.players[0];
     const p2 = room.players[1];
 
-    const isKnockout = room.matchesPlayed > 3;
+    // Simulate match with knockout rules enabled (shootout/extra time) to resolve a winner
     const matchRes = simulateMatch(
       { name: p1.teamName || p1.name, squad: p1.squad, tactic: p1.tactic, stats: p1.stats },
       { name: p2.teamName || p2.name, squad: p2.squad, tactic: p2.tactic, stats: p2.stats },
-      isKnockout
+      true
     );
 
     updateStatsTracker(room, matchRes, p1.squad, p2.squad);
 
     const matchDetails = {
-      matchNum: room.matchesPlayed,
+      matchNum: 1,
       teamAName: p1.teamName || p1.name,
       teamBName: p2.teamName || p2.name,
       teamAStats: {
@@ -608,9 +739,8 @@ function simulateRound(room) {
 
     room.players.forEach(p => { p.ready = false; });
 
-    if (room.matchesPlayed >= 7) {
-      room.status = 'finished';
-    }
+    // One game format -> immediately finished!
+    room.status = 'finished';
 
     io.to(room.roomId).emit('match_simulated', {
       matchDetails,
