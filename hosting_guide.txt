@@ -1,0 +1,64 @@
+FIFA WORLD CUP DRAFT - DEPLOYMENT & HOSTING GUIDE
+
+To host this application so that multiplayer works, you must deploy the React Frontend and the Socket.io Node.js Backend separately.
+
+======================================================================
+1. WILL MULTIPLAYER WORK ON VERCEL?
+======================================================================
+- React Frontend: YES. Static assets work perfectly on Vercel.
+- Socket.io Backend: NO. Vercel uses stateless, short-lived Serverless
+  Functions. WebSockets require a stateful, persistent server to keep 
+  track of active lobbies, drafts, and matchmaking in memory.
+
+======================================================================
+2. RECOMMENDED HOSTING
+======================================================================
+- Frontend: Vercel (Free)
+- Backend: Render.com or Railway.app (Persistent Web Service)
+
+======================================================================
+PART A: DEPLOY THE BACKEND (ON RENDER)
+======================================================================
+1. Sign in to Render.com using your GitHub account.
+2. Click "New" and select "Web Service".
+3. Connect your GitHub repository.
+4. Configure these settings:
+   * Name: world-cup-draft-backend
+   * Branch: feature/shreeprasandh-dev
+   * Root Directory: server
+   * Runtime: Node
+   * Build Command: npm install
+   * Start Command: node src/server.js
+   * Instance Type: Free
+5. Open the "Environment" tab and add:
+   * SUPABASE_URL = https://fkswnfrcvcoruvkuyutx.supabase.co
+   * SUPABASE_ANON_KEY = [Your Supabase Anon Key]
+   * SUPABASE_SERVICE_ROLE_KEY = [Your Supabase Service Role Key]
+6. Click "Create Web Service".
+7. Copy your deployed server's URL (e.g., https://world-cup-draft-backend.onrender.com).
+
+======================================================================
+PART B: DEPLOY THE FRONTEND (ON VERCEL)
+======================================================================
+1. Sign in to Vercel.com using your GitHub account.
+2. Click "Add New" and select "Project".
+3. Import your GitHub repository.
+4. Configure these settings:
+   * Framework Preset: Vite
+   * Root Directory: client (Click Edit and select the "client" folder)
+   * Build Command: npm run build
+   * Output Directory: dist
+5. Expand the "Environment Variables" section and add:
+   * VITE_SOCKET_URL = [Your Render URL] (e.g., https://world-cup-draft-backend.onrender.com) -> Make sure there is NO trailing slash.
+   * VITE_SUPABASE_URL = https://fkswnfrcvcoruvkuyutx.supabase.co
+   * VITE_SUPABASE_ANON_KEY = [Your Supabase Anon Key]
+6. Click "Deploy".
+
+======================================================================
+PART C: TROUBLESHOOTING NOTES
+======================================================================
+- Free Tier Spin-down: Render's Free tier spins down (sleeps) after 15 minutes
+  of inactivity. When accessing the application for the first time in a while,
+  matchmaking/logging in might take ~30 seconds to respond while the server boots.
+- CORS Configuration: The server configuration (server.js) is preset to cors: origin "*",
+  allowing the frontend deployed on Vercel to establish socket connections seamlessly.
