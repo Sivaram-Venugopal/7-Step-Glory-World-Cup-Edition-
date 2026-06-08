@@ -2,9 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { 
   Trophy, Users, User, ArrowRight, Play, RotateCcw, 
-  Settings, Shield, ChevronRight, CheckCircle2, AlertCircle, Sparkles, RefreshCw
+  Settings, Shield, ChevronRight, CheckCircle2, AlertCircle, Sparkles, RefreshCw,
+  LogOut, Calendar, Award, Eye, EyeOff
 } from 'lucide-react';
 import RetroDither from './RetroDither';
+import { supabase, isSupabaseConfigured } from './supabase.js';
 
 const SOCKET_URL = window.location.hostname === 'localhost' 
   ? 'http://localhost:5000' 
@@ -345,6 +347,291 @@ export default function App() {
     }, 1000);
   };
 
+  // Supabase Authentication states
+  const [session, setSession] = useState(null);
+  const [user, setUser] = useState(null);
+  const [authMode, setAuthMode] = useState(isSupabaseConfigured ? "LOGIN" : "GUEST"); // LOGIN, SIGNUP, GUEST
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState("");
+
+  // Local/Custom Manager Login states (for password authentication without email)
+  const [loginManagerName, setLoginManagerName] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [localAuthError, setLocalAuthError] = useState("");
+  const [localAuthSuccess, setLocalAuthSuccess] = useState("");
+
+  // Retro popup states for unregistered users
+  const [showSignUpPopup, setShowSignUpPopup] = useState(false);
+  const [pendingUsername, setPendingUsername] = useState("");
+  const [pendingPassword, setPendingPassword] = useState("");
+
+  // Supabase Tournament History states
+  const [supabaseTournamentId, setSupabaseTournamentId] = useState(null);
+  const [historicalRuns, setHistoricalRuns] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [expandedRunId, setExpandedRunId] = useState(null);
+
+  // Supabase & Local Session Hooks
+  useEffect(() => {
+    // Check local storage manager profile first
+    const savedManager = localStorage.getItem('logged_in_manager');
+    if (savedManager) {
+      setPlayerName(savedManager);
+      setUser({
+        id: 'local-' + savedManager.toLowerCase(),
+        email: savedManager,
+        user_metadata: { username: savedManager }
+      });
+    }
+
+    if (!supabase) return;
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setSession(session);
+        setUser(session.user);
+        setPlayerName(session.user.user_metadata?.username || session.user.email.split('@')[0]);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        setSession(session);
+        setUser(session.user);
+        setPlayerName(session.user.user_metadata?.username || session.user.email.split('@')[0]);
+      } else {
+        setSession(null);
+        // Only clear user if we are not logged in locally either
+        if (!localStorage.getItem('logged_in_manager')) {
+          setUser(null);
+        }
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleLocalSignIn = (e) => {
+    e.preventDefault();
+    setLocalAuthError("");
+    setLocalAuthSuccess("");
+    if (!loginManagerName || !loginPassword) {
+      setLocalAuthError("Please enter both Manager Name and Password.");
+      return;
+    }
+
+    const saved = localStorage.getItem('registered_managers');
+    const managers = saved ? JSON.parse(saved) : {};
+    const lowerName = loginManagerName.trim().toLowerCase();
+
+    if (!managers[lowerName]) {
+      // User not found -> Show popup to confirm creation of a new user
+      setPendingUsername(loginManagerName.trim());
+      setPendingPassword(loginPassword);
+      setShowSignUpPopup(true);
+      return;
+    }
+
+    if (managers[lowerName] !== loginPassword) {
+      setLocalAuthError("Incorrect password for this manager.");
+      return;
+    }
+
+    // Login successful
+    const actualName = loginManagerName.trim();
+    localStorage.setItem('logged_in_manager', actualName);
+    setPlayerName(actualName);
+    setUser({
+      id: 'local-' + lowerName,
+      email: actualName,
+      user_metadata: { username: actualName }
+    });
+    setLocalAuthSuccess(`Welcome back, Manager ${actualName}!`);
+    playSound('whistle');
+  };
+
+  const handleConfirmSignUp = () => {
+    if (!pendingUsername || !pendingPassword) return;
+    
+    if (pendingPassword.length < 6) {
+      setLocalAuthError("Password must be at least 6 characters.");
+      setShowSignUpPopup(false);
+      return;
+    }
+
+    const saved = localStorage.getItem('registered_managers');
+    const managers = saved ? JSON.parse(saved) : {};
+    const lowerName = pendingUsername.toLowerCase();
+
+    // Save registration
+    managers[lowerName] = pendingPassword;
+    localStorage.setItem('registered_managers', JSON.stringify(managers));
+
+    // Auto log-in
+    localStorage.setItem('logged_in_manager', pendingUsername);
+    setPlayerName(pendingUsername);
+    setUser({
+      id: 'local-' + lowerName,
+      email: pendingUsername,
+      user_metadata: { username: pendingUsername }
+    });
+    setLocalAuthSuccess(`Profile created! Welcome, Manager ${pendingUsername}.`);
+    playSound('whistle');
+    
+    // Reset states
+    setShowSignUpPopup(false);
+    setPendingUsername("");
+    setPendingPassword("");
+  };
+
+  const handleSignUp = async (e) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    setAuthError("");
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            username: email.split('@')[0]
+          }
+        }
+      });
+      if (error) throw error;
+      setAuthError("Check your email for confirmation link!");
+    } catch (err) {
+      setAuthError(err.message);
+    }
+  };
+
+  const handleLogIn = async (e) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    setAuthError("");
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
+      if (error) throw error;
+    } catch (err) {
+      setAuthError(err.message);
+    }
+  };
+
+  const handleLogOut = async () => {
+    if (supabase && isSupabaseConfigured) {
+      await supabase.auth.signOut();
+    }
+    localStorage.removeItem('logged_in_manager');
+    setSession(null);
+    setUser(null);
+    setAuthMode("LOGIN");
+    setShowLocalSignUp(false);
+    setLocalAuthError("");
+    setLocalAuthSuccess("");
+  };
+
+  const startSupabaseTournament = async (roomState) => {
+    if (!supabase || !user) return;
+
+    try {
+      const userPlayer = roomState.players.find(p => p.id === socket?.id) || roomState.players[0];
+      const { data, error } = await supabase
+        .from('tournaments')
+        .insert({
+          user_id: user.id,
+          user_name: user.user_metadata?.username || user.email.split('@')[0],
+          user_team: userPlayer?.teamName || "Brazil",
+          type: roomState.isSinglePlayer ? 'AI' : 'Friend',
+          stages_played: 0,
+          won_cup: false
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      setSupabaseTournamentId(data.id);
+    } catch (err) {
+      console.error("Error creating tournament record:", err.message);
+    }
+  };
+
+  const saveMatchToSupabase = async (matchDetails, roomState) => {
+    if (!supabase || !user || !supabaseTournamentId) return;
+
+    try {
+      const { error: matchErr } = await supabase
+        .from('tournament_matches')
+        .insert({
+          tournament_id: supabaseTournamentId,
+          match_num: matchDetails.matchNum,
+          team_a_name: matchDetails.teamAName,
+          team_b_name: matchDetails.teamBName,
+          score_a: matchDetails.scoreA,
+          score_b: matchDetails.scoreB,
+          events: matchDetails.events
+        });
+
+      if (matchErr) throw matchErr;
+
+      const wonCup = roomState.status === 'finished' && matchDetails.matchNum >= 8 && (matchDetails.scoreA > matchDetails.scoreB);
+      const { error: tournErr } = await supabase
+        .from('tournaments')
+        .update({
+          stages_played: matchDetails.matchNum,
+          won_cup: wonCup
+        })
+        .eq('id', supabaseTournamentId);
+
+      if (tournErr) throw tournErr;
+    } catch (err) {
+      console.error("Error saving match details:", err.message);
+    }
+  };
+
+  const loadTournamentHistory = async () => {
+    if (!supabase || !user) return;
+    setLoadingHistory(true);
+    try {
+      const { data, error } = await supabase
+        .from('tournaments')
+        .select(`
+          id,
+          user_team,
+          type,
+          stages_played,
+          won_cup,
+          created_at,
+          tournament_matches (
+            match_num,
+            team_a_name,
+            team_b_name,
+            score_a,
+            score_b
+          )
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setHistoricalRuns(data);
+    } catch (err) {
+      console.error("Error loading tournament history:", err.message);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeDashboardTab === "HISTORY") {
+      loadTournamentHistory();
+    }
+  }, [activeDashboardTab, user]);
+
   // Audio Synth
   const playSound = (type) => {
     try {
@@ -414,6 +701,14 @@ export default function App() {
       setRoom(roomState);
       const lp = roomState.players.find(p => p.id === s.id);
       setLocalPlayer(lp);
+
+      // Initialize Supabase tournament record if starting tournament
+      if (roomState.status === 'tournament' && roomState.matchesPlayed === 0) {
+        const isHost = lp?.isHost || roomState.players[0]?.id === s.id;
+        if (isHost && !supabaseTournamentId) {
+          startSupabaseTournament(roomState);
+        }
+      }
     });
 
     s.on('draft_options', (data) => {
@@ -435,6 +730,13 @@ export default function App() {
       setShootoutEvent(null);
       setBallPos({ x: '50%', y: '50%' });
       playSound('whistle');
+
+      // Save match to Supabase (Host only saves the record in multiplayer to prevent double writing!)
+      const lp = roomState.players.find(p => p.id === s.id);
+      const isHost = lp?.isHost || roomState.players[0]?.id === s.id;
+      if (isHost) {
+        saveMatchToSupabase(matchDetails, roomState);
+      }
     });
 
     return () => {
@@ -716,11 +1018,135 @@ export default function App() {
     );
   }
 
+  // Render Auth screen if not logged in
+  if (!user) {
+    return (
+      <div className="landing-wrapper" style={{ padding: '40px 20px', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <div className="dashboard-panel max-w-md" style={{ width: '100%', margin: 'auto' }}>
+          {localAuthError && (
+            <div className="alert-box alert-box-red text-xs mb-4 text-center">
+              {localAuthError}
+            </div>
+          )}
+
+          {localAuthSuccess && (
+            <div className="alert-box text-xs mb-4 text-center">
+              {localAuthSuccess}
+            </div>
+          )}
+
+          <div className="space-y-4">
+            <h3 className="text-sm uppercase font-bold border-b pb-2 flex items-center gap-2" style={{ color: 'var(--color-gold)', fontFamily: "'Share Tech Mono', monospace" }}>
+              <User size={16} /> Manager Login
+            </h3>
+
+            <form onSubmit={handleLocalSignIn} className="space-y-4">
+              <div>
+                <label className="block text-xs uppercase font-bold mb-1" style={{ color: 'var(--color-text-dim)', fontFamily: "'Share Tech Mono', monospace" }}>Manager Name</label>
+                <input 
+                  type="text" 
+                  placeholder="e.g. Pep Guardiola" 
+                  value={loginManagerName} 
+                  onChange={e => setLoginManagerName(e.target.value)}
+                  className="sports-input"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs uppercase font-bold mb-1" style={{ color: 'var(--color-text-dim)', fontFamily: "'Share Tech Mono', monospace" }}>Password</label>
+                <div style={{ position: 'relative' }}>
+                  <input 
+                    type={showLoginPassword ? "text" : "password"} 
+                    placeholder="••••••••" 
+                    value={loginPassword} 
+                    onChange={e => setLoginPassword(e.target.value)}
+                    className="sports-input"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword(!showLoginPassword)}
+                    style={{ position: 'absolute', right: '12px', top: '15px', background: 'transparent', border: 'none', color: 'var(--color-text-dim)', cursor: 'pointer' }}
+                  >
+                    {showLoginPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+
+              <button type="submit" className="btn-sports w-full mt-2">
+                <Play size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} /> Enter Manager Suite
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {/* Retro Sign Up Popup Modal */}
+        {showSignUpPopup && (
+          <div className="retro-popup-overlay" style={{
+            position: 'fixed',
+            top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.85)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999999
+          }}>
+            <div className="dashboard-panel max-w-md" style={{
+              background: '#090909',
+              border: '3px double #ffffff',
+              padding: '30px',
+              textAlign: 'center',
+              boxShadow: '0 0 30px rgba(255,255,255,0.2)'
+            }}>
+              <AlertCircle size={48} style={{ color: '#ffffff', marginBottom: '16px' }} />
+              <h3 style={{ fontFamily: "'Share Tech Mono', monospace", textTransform: 'uppercase', marginBottom: '12px', letterSpacing: '1px' }}>
+                Profile Not Found
+              </h3>
+              <p className="text-xs" style={{ color: '#cccccc', marginBottom: '24px', lineHeight: '1.6' }}>
+                Manager profile <b>"{pendingUsername}"</b> is not registered. <br />
+                Would you like to create a new profile with these credentials?
+              </p>
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                <button 
+                  onClick={() => { setShowSignUpPopup(false); setPendingUsername(""); setPendingPassword(""); }} 
+                  className="btn-sports-secondary"
+                  style={{ minWidth: '100px', fontSize: '0.8rem', padding: '10px 18px' }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleConfirmSignUp} 
+                  className="btn-sports"
+                  style={{ minWidth: '140px', fontSize: '0.8rem', padding: '10px 18px' }}
+                >
+                  Create Profile
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // Render Landing Page
   if (!room) {
     return (
       <div className="landing-wrapper">
         <div className="dashboard-panel max-w-md">
+          {user && (
+            <div className="flex justify-between items-center p-2 rounded-lg mb-4" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(46, 204, 113, 0.15)', fontSize: '0.75rem' }}>
+              <span style={{ color: 'var(--color-text-dim)' }}>Logged in as: <b>{user.email}</b></span>
+              <button 
+                onClick={handleLogOut} 
+                className="btn-sports-secondary" 
+                style={{ padding: '4px 8px', fontSize: '0.65rem' }}
+              >
+                <LogOut size={12} style={{ marginRight: '4px' }} /> Sign Out
+              </button>
+            </div>
+          )}
           <div className="text-center mb-6">
             <div className="flex justify-center mb-2">
               <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
@@ -743,13 +1169,14 @@ export default function App() {
 
           <div className="space-y-6">
             <div>
-              <label className="block text-xs uppercase font-bold mb-2" style={{ color: 'var(--color-green)' }}>Enter Manager Profile</label>
+              <label className="block text-xs uppercase font-bold mb-2" style={{ color: 'var(--color-green)' }}>Active Manager Profile</label>
               <input 
                 type="text" 
                 placeholder="Manager Name..." 
                 value={playerName} 
-                onChange={e => setPlayerName(e.target.value)}
                 className="sports-input" 
+                disabled={true}
+                style={{ opacity: 0.8, cursor: 'not-allowed', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(46, 204, 113, 0.15)' }}
               />
             </div>
 
@@ -1265,6 +1692,7 @@ export default function App() {
           <button onClick={() => setActiveDashboardTab("SCOUTING")} className={`tab-btn ${activeDashboardTab === "SCOUTING" ? 'active' : ''}`}>Squad Scouting</button>
           {room.isSinglePlayer && <button onClick={() => setActiveDashboardTab("STANDINGS")} className={`tab-btn ${activeDashboardTab === "STANDINGS" ? 'active' : ''}`}>All Groups Standings</button>}
           <button onClick={() => setActiveDashboardTab("STATS")} className={`tab-btn ${activeDashboardTab === "STATS" ? 'active' : ''}`}>Leaderboards</button>
+          {user && <button onClick={() => setActiveDashboardTab("HISTORY")} className={`tab-btn ${activeDashboardTab === "HISTORY" ? 'active' : ''}`}>🏆 Tournament History</button>}
         </div>
 
         {/* --- TAB 1: SQUAD SCOUTING & CONTROLS --- */}
@@ -1586,6 +2014,100 @@ export default function App() {
               </div>
             </div>
 
+          </div>
+        )}
+
+        {/* --- TAB 4: TOURNAMENT HISTORY (SUPABASE CLOUD HISTORY) --- */}
+        {activeDashboardTab === "HISTORY" && user && (
+          <div className="dashboard-panel space-y-6">
+            <h3 className="text-sm uppercase font-bold border-b pb-2 flex items-center gap-2" style={{ color: 'var(--color-gold)' }}>
+              <Award size={16} /> Cloud Campaign History Log
+            </h3>
+
+            {loadingHistory ? (
+              <div className="text-center py-8 text-xs animate-pulse" style={{ color: 'var(--color-text-dim)' }}>
+                LOADING CLOUD HISTORY...
+              </div>
+            ) : historicalRuns.length === 0 ? (
+              <div className="text-center py-8 text-xs" style={{ color: 'var(--color-text-dim)' }}>
+                No completed tournament logs found in your account history.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {historicalRuns.map((run) => {
+                  const isExpanded = expandedRunId === run.id;
+                  const dateStr = new Date(run.created_at).toLocaleDateString(undefined, {
+                    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                  });
+
+                  const getStageLabel = (stagesPlayed, wonCup) => {
+                    if (wonCup) return "🏆 CHAMPIONS!";
+                    if (stagesPlayed <= 3) return "Group Stage";
+                    if (stagesPlayed === 4) return "Round of 32";
+                    if (stagesPlayed === 5) return "Round of 16";
+                    if (stagesPlayed === 6) return "Quarterfinal";
+                    if (stagesPlayed === 7) return "Semifinal";
+                    if (stagesPlayed === 8) return "Runner-up";
+                    return `Match ${stagesPlayed}`;
+                  };
+
+                  return (
+                    <div key={run.id} className="p-4 rounded-lg" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(46,204,113,0.15)' }}>
+                      <div className="flex justify-between items-center flex-wrap gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-white text-sm">{run.user_team}</span>
+                            <span className="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded uppercase font-semibold">
+                              VS {run.type}
+                            </span>
+                          </div>
+                          <p className="text-[10px] mt-1" style={{ color: 'var(--color-text-dim)' }}>
+                            <Calendar size={10} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} /> {dateStr}
+                          </p>
+                        </div>
+                        
+                        <div className="flex items-center gap-4">
+                          <span className="text-xs font-extrabold" style={{ color: run.won_cup ? 'var(--color-gold)' : 'var(--color-white)' }}>
+                            {getStageLabel(run.stages_played, run.won_cup)}
+                          </span>
+                          <button 
+                            onClick={() => setExpandedRunId(isExpanded ? null : run.id)}
+                            className="btn-sports-secondary"
+                            style={{ padding: '6px 12px', fontSize: '0.68rem' }}
+                          >
+                            {isExpanded ? 'Hide Details' : 'View Matches'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Expanded matches list */}
+                      {isExpanded && (
+                        <div className="mt-4 pt-4 border-t border-dashed" style={{ borderColor: 'rgba(46,204,113,0.2)' }}>
+                          <h4 className="text-[10px] uppercase font-bold mb-2 text-slate-400">Match Progression:</h4>
+                          <div className="space-y-2">
+                            {run.tournament_matches?.sort((a,b) => a.match_num - b.match_num).map((match, mIdx) => {
+                              const wonMatch = match.score_a > match.score_b;
+                              const drawMatch = match.score_a === match.score_b;
+                              return (
+                                <div key={mIdx} className="flex justify-between items-center text-xs p-2 rounded" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                                  <span style={{ color: 'var(--color-text-dim)' }}>Match {match.match_num}</span>
+                                  <span className="font-semibold text-white">
+                                    {match.team_a_name} <span style={{ color: 'var(--color-gold)' }}>{match.score_a} - {match.score_b}</span> {match.team_b_name}
+                                  </span>
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${wonMatch ? 'bg-green-500/10 text-green-400' : drawMatch ? 'bg-slate-500/10 text-slate-400' : 'bg-red-500/10 text-red-400'}`}>
+                                    {wonMatch ? 'W' : drawMatch ? 'D' : 'L'}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 

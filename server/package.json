@@ -6,10 +6,13 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node src/server.js"
+    "dev": "node src/server.js",
+    "db:seed": "node src/db/migrate_players.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.107.0",
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^4.21.2",
     "socket.io": "^4.8.1"
   }
