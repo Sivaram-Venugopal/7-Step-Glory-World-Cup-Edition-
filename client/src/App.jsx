@@ -277,28 +277,143 @@ export default function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState("");
 
+  // Local/Custom Manager Login states (for password authentication without email)
+  const [loginManagerName, setLoginManagerName] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [signupManagerName, setSignupManagerName] = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
+  const [signupConfirmPassword, setSignupConfirmPassword] = useState("");
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
+  const [localAuthError, setLocalAuthError] = useState("");
+  const [localAuthSuccess, setLocalAuthSuccess] = useState("");
+
   // Supabase Tournament History states
   const [supabaseTournamentId, setSupabaseTournamentId] = useState(null);
   const [historicalRuns, setHistoricalRuns] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [expandedRunId, setExpandedRunId] = useState(null);
 
-  // Supabase Sync Hooks & Functions
+  // Supabase & Local Session Hooks
   useEffect(() => {
+    // Check local storage manager profile first
+    const savedManager = localStorage.getItem('logged_in_manager');
+    if (savedManager) {
+      setPlayerName(savedManager);
+      setUser({
+        id: 'local-' + savedManager.toLowerCase(),
+        email: savedManager,
+        user_metadata: { username: savedManager }
+      });
+    }
+
     if (!supabase) return;
 
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user || null);
+      if (session) {
+        setSession(session);
+        setUser(session.user);
+        setPlayerName(session.user.user_metadata?.username || session.user.email.split('@')[0]);
+      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user || null);
+      if (session) {
+        setSession(session);
+        setUser(session.user);
+        setPlayerName(session.user.user_metadata?.username || session.user.email.split('@')[0]);
+      } else {
+        setSession(null);
+        // Only clear user if we are not logged in locally either
+        if (!localStorage.getItem('logged_in_manager')) {
+          setUser(null);
+        }
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  const handleLocalSignIn = (e) => {
+    e.preventDefault();
+    setLocalAuthError("");
+    setLocalAuthSuccess("");
+    if (!loginManagerName || !loginPassword) {
+      setLocalAuthError("Please enter both Manager Name and Password.");
+      return;
+    }
+
+    const saved = localStorage.getItem('registered_managers');
+    const managers = saved ? JSON.parse(saved) : {};
+    const lowerName = loginManagerName.trim().toLowerCase();
+
+    if (!managers[lowerName]) {
+      setLocalAuthError("Manager name not registered. Fill in the form on the right to sign up!");
+      return;
+    }
+
+    if (managers[lowerName] !== loginPassword) {
+      setLocalAuthError("Incorrect password for this manager.");
+      return;
+    }
+
+    // Login successful
+    const actualName = loginManagerName.trim();
+    localStorage.setItem('logged_in_manager', actualName);
+    setPlayerName(actualName);
+    setUser({
+      id: 'local-' + lowerName,
+      email: actualName,
+      user_metadata: { username: actualName }
+    });
+    setLocalAuthSuccess(`Welcome back, Manager ${actualName}!`);
+    playSound('whistle');
+  };
+
+  const handleLocalSignUp = (e) => {
+    e.preventDefault();
+    setLocalAuthError("");
+    setLocalAuthSuccess("");
+    if (!signupManagerName || !signupPassword || !signupConfirmPassword) {
+      setLocalAuthError("Please fill in all registration fields.");
+      return;
+    }
+
+    if (signupPassword.length < 6) {
+      setLocalAuthError("Password must be at least 6 characters.");
+      return;
+    }
+
+    if (signupPassword !== signupConfirmPassword) {
+      setLocalAuthError("Passwords do not match.");
+      return;
+    }
+
+    const saved = localStorage.getItem('registered_managers');
+    const managers = saved ? JSON.parse(saved) : {};
+    const lowerName = signupManagerName.trim().toLowerCase();
+
+    if (managers[lowerName]) {
+      setLocalAuthError("Manager name already registered. Try signing in on the left!");
+      return;
+    }
+
+    // Save registration
+    managers[lowerName] = signupPassword;
+    localStorage.setItem('registered_managers', JSON.stringify(managers));
+
+    // Auto log-in
+    const actualName = signupManagerName.trim();
+    localStorage.setItem('logged_in_manager', actualName);
+    setPlayerName(actualName);
+    setUser({
+      id: 'local-' + lowerName,
+      email: actualName,
+      user_metadata: { username: actualName }
+    });
+    setLocalAuthSuccess("Profile registered! Entering Manager Suite...");
+    playSound('whistle');
+  };
 
   const handleSignUp = async (e) => {
     e.preventDefault();
@@ -337,11 +452,15 @@ export default function App() {
   };
 
   const handleLogOut = async () => {
-    if (!supabase) return;
-    await supabase.auth.signOut();
+    if (supabase && isSupabaseConfigured) {
+      await supabase.auth.signOut();
+    }
+    localStorage.removeItem('logged_in_manager');
     setSession(null);
     setUser(null);
     setAuthMode("LOGIN");
+    setLocalAuthError("");
+    setLocalAuthSuccess("");
   };
 
   const startSupabaseTournament = async (roomState) => {
@@ -797,93 +916,145 @@ export default function App() {
     return running;
   };
 
-  // Render Auth screen if Supabase is active and not logged in / bypass guest
-  if (isSupabaseConfigured && authMode !== "GUEST" && !user) {
+  // Render Auth screen if not logged in
+  if (!user) {
     return (
-      <div className="landing-wrapper">
-        <div className="dashboard-panel max-w-md">
+      <div className="landing-wrapper" style={{ padding: '40px 20px', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <div className="dashboard-panel" style={{ maxWidth: '850px', width: '100%', margin: 'auto' }}>
           <div className="text-center mb-6">
             <div className="flex justify-center mb-2">
               <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
             </div>
             <h1 className="logo-heading">WORLD CUP DRAFT</h1>
-            <h2 className="sub-heading">FIFA 2026 EDITION</h2>
-            <p className="text-xs" style={{ color: 'var(--color-text-dim)', marginTop: '6px', fontWeight: 800 }}>MEMBER PORTAL</p>
+            <h2 className="sub-heading">7-Step Trophy Run</h2>
+            <p className="text-xs" style={{ color: 'var(--color-text-dim)', marginTop: '6px', fontWeight: 800 }}>FIFA 2026 EDITION</p>
           </div>
 
-          <div className="space-y-4">
-            <div className="flex justify-around border-b pb-2 mb-2">
-              <button 
-                onClick={() => { setAuthMode("LOGIN"); setAuthError(""); }}
-                className={`tab-btn ${authMode === "LOGIN" ? "active" : ""}`}
-                style={{ fontSize: '0.8rem' }}
-              >
-                Sign In
-              </button>
-              <button 
-                onClick={() => { setAuthMode("SIGNUP"); setAuthError(""); }}
-                className={`tab-btn ${authMode === "SIGNUP" ? "active" : ""}`}
-                style={{ fontSize: '0.8rem' }}
-              >
-                Register
-              </button>
+          {localAuthError && (
+            <div className="alert-box alert-box-red text-xs mb-4 text-center">
+              {localAuthError}
             </div>
+          )}
 
-            {authError && (
-              <div className={`alert-box ${authError.includes("confirm") ? "alert-box-amber" : "alert-box-red"} text-xs`}>
-                {authError}
-              </div>
-            )}
+          {localAuthSuccess && (
+            <div className="alert-box alert-box-green text-xs mb-4 text-center" style={{ background: 'rgba(46,204,113,0.1)', borderColor: 'var(--color-green)', color: 'var(--color-green)' }}>
+              {localAuthSuccess}
+            </div>
+          )}
 
-            <form onSubmit={authMode === "LOGIN" ? handleLogIn : handleSignUp} className="space-y-4">
-              <div>
-                <label className="block text-xs uppercase font-bold mb-1" style={{ color: 'var(--color-text-dim)' }}>Email Address</label>
-                <input 
-                  type="email" 
-                  placeholder="your-email@example.com" 
-                  value={email} 
-                  onChange={e => setEmail(e.target.value)}
-                  className="sports-input"
-                  required
-                />
-              </div>
+          <div className="grid-2" style={{ gap: '32px' }}>
+            
+            {/* LEFT COLUMN: SIGN IN */}
+            <div className="space-y-4 pr-0 md:pr-4" style={{ borderRight: '1px solid rgba(46, 204, 113, 0.15)' }}>
+              <h3 className="text-sm uppercase font-bold border-b pb-2 flex items-center gap-2" style={{ color: 'var(--color-gold)' }}>
+                <User size={16} /> Sign In
+              </h3>
+              <p className="text-[11px]" style={{ color: 'var(--color-text-dim)' }}>
+                Enter your registered Manager Name and Password to resume your career.
+              </p>
 
-              <div>
-                <label className="block text-xs uppercase font-bold mb-1" style={{ color: 'var(--color-text-dim)' }}>Password</label>
-                <div style={{ position: 'relative' }}>
+              <form onSubmit={handleLocalSignIn} className="space-y-4">
+                <div>
+                  <label className="block text-xs uppercase font-bold mb-1" style={{ color: 'var(--color-text-dim)' }}>Manager Name</label>
                   <input 
-                    type={showPassword ? "text" : "password"} 
-                    placeholder="••••••••" 
-                    value={password} 
-                    onChange={e => setPassword(e.target.value)}
+                    type="text" 
+                    placeholder="e.g. Pep Guardiola" 
+                    value={loginManagerName} 
+                    onChange={e => setLoginManagerName(e.target.value)}
                     className="sports-input"
-                    minLength="6"
                     required
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    style={{ position: 'absolute', right: '12px', top: '15px', background: 'transparent', border: 'none', color: 'var(--color-text-dim)', cursor: 'pointer' }}
-                  >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
                 </div>
-              </div>
 
-              <button type="submit" className="btn-sports w-full mt-2">
-                {authMode === "LOGIN" ? "Sign In" : "Create Account"}
-              </button>
-            </form>
+                <div>
+                  <label className="block text-xs uppercase font-bold mb-1" style={{ color: 'var(--color-text-dim)' }}>Password</label>
+                  <div style={{ position: 'relative' }}>
+                    <input 
+                      type={showLoginPassword ? "text" : "password"} 
+                      placeholder="••••••••" 
+                      value={loginPassword} 
+                      onChange={e => setLoginPassword(e.target.value)}
+                      className="sports-input"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword(!showLoginPassword)}
+                      style={{ position: 'absolute', right: '12px', top: '15px', background: 'transparent', border: 'none', color: 'var(--color-text-dim)', cursor: 'pointer' }}
+                    >
+                      {showLoginPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
 
-            <div className="text-center pt-2 border-t">
-              <button 
-                onClick={() => setAuthMode("GUEST")}
-                className="btn-sports-secondary w-full"
-                style={{ fontSize: '0.8rem', padding: '10px' }}
-              >
-                ⚡ Play as Guest (No Cloud Save)
-              </button>
+                <button type="submit" className="btn-sports w-full mt-2">
+                  <Play size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} /> Enter Manager Suite
+                </button>
+              </form>
             </div>
+
+            {/* RIGHT COLUMN: SIGN UP */}
+            <div className="space-y-4 pt-6 md:pt-0">
+              <h3 className="text-sm uppercase font-bold border-b pb-2 flex items-center gap-2" style={{ color: 'var(--color-green)' }}>
+                <Sparkles size={16} /> Create Manager Profile
+              </h3>
+              <p className="text-[11px]" style={{ color: 'var(--color-text-dim)' }}>
+                First-time manager? Register your name and passcode to begin your campaign.
+              </p>
+
+              <form onSubmit={handleLocalSignUp} className="space-y-4">
+                <div>
+                  <label className="block text-xs uppercase font-bold mb-1" style={{ color: 'var(--color-text-dim)' }}>Manager Name</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. Carlo Ancelotti" 
+                    value={signupManagerName} 
+                    onChange={e => setSignupManagerName(e.target.value)}
+                    className="sports-input"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs uppercase font-bold mb-1" style={{ color: 'var(--color-text-dim)' }}>Password</label>
+                  <div style={{ position: 'relative' }}>
+                    <input 
+                      type={showSignupPassword ? "text" : "password"} 
+                      placeholder="Min 6 characters" 
+                      value={signupPassword} 
+                      onChange={e => setSignupPassword(e.target.value)}
+                      className="sports-input"
+                      minLength="6"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSignupPassword(!showSignupPassword)}
+                      style={{ position: 'absolute', right: '12px', top: '15px', background: 'transparent', border: 'none', color: 'var(--color-text-dim)', cursor: 'pointer' }}
+                    >
+                      {showSignupPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs uppercase font-bold mb-1" style={{ color: 'var(--color-text-dim)' }}>Confirm Password</label>
+                  <input 
+                    type="password" 
+                    placeholder="Repeat password" 
+                    value={signupConfirmPassword} 
+                    onChange={e => setSignupConfirmPassword(e.target.value)}
+                    className="sports-input"
+                    required
+                  />
+                </div>
+
+                <button type="submit" className="btn-sports w-full mt-2" style={{ background: 'var(--color-green)', color: '#000', border: 'none' }}>
+                  <CheckCircle2 size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} /> Register Manager
+                </button>
+              </form>
+            </div>
+
           </div>
         </div>
       </div>
@@ -907,18 +1078,6 @@ export default function App() {
               </button>
             </div>
           )}
-          {!user && isSupabaseConfigured && (
-            <div className="flex justify-between items-center p-2 rounded-lg mb-4" style={{ background: 'rgba(241, 196, 15, 0.05)', border: '1px solid rgba(241, 196, 15, 0.15)', fontSize: '0.75rem' }}>
-              <span style={{ color: 'var(--color-gold)' }}>Guest Session</span>
-              <button 
-                onClick={() => setAuthMode("LOGIN")} 
-                className="btn-sports" 
-                style={{ padding: '4px 8px', fontSize: '0.65rem', background: 'var(--color-gold)', color: '#000', border: 'none' }}
-              >
-                Sign In
-              </button>
-            </div>
-          )}
           <div className="text-center mb-6">
             <div className="flex justify-center mb-2">
               <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
@@ -938,13 +1097,14 @@ export default function App() {
 
           <div className="space-y-6">
             <div>
-              <label className="block text-xs uppercase font-bold mb-2" style={{ color: 'var(--color-green)' }}>Enter Manager Profile</label>
+              <label className="block text-xs uppercase font-bold mb-2" style={{ color: 'var(--color-green)' }}>Active Manager Profile</label>
               <input 
                 type="text" 
                 placeholder="Manager Name..." 
                 value={playerName} 
-                onChange={e => setPlayerName(e.target.value)}
                 className="sports-input" 
+                disabled={true}
+                style={{ opacity: 0.8, cursor: 'not-allowed', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(46, 204, 113, 0.15)' }}
               />
             </div>
 

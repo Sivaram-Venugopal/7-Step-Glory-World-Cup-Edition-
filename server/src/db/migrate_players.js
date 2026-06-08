@@ -11,16 +11,18 @@ const __dirname = path.dirname(__filename);
 // Load env configuration
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
-const { SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
+const { SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.error("❌ ERROR: Please define SUPABASE_URL and SUPABASE_ANON_KEY in server/.env file.");
+const writeKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+
+if (!SUPABASE_URL || !writeKey) {
+  console.error("❌ ERROR: Please define SUPABASE_URL and SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY in server/.env file.");
   process.exit(1);
 }
 
 // NOTE: During migration, if RLS is active, it is best to use your Supabase service_role key.
-// If you use the Anon key, make sure you temporarily disable RLS or add INSERT policies.
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// Using the service_role key bypasses RLS policies and allows database seeding.
+const supabase = createClient(SUPABASE_URL, writeKey);
 
 // Import local data files using relative resolution
 const playersFilePath = path.resolve(__dirname, '../data/players.js');
