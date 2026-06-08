@@ -457,7 +457,7 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const handleLocalSignIn = (e) => {
+  const handleLocalSignIn = async (e) => {
     e.preventDefault();
     setLocalAuthError("");
     setLocalAuthSuccess("");
@@ -466,37 +466,77 @@ export default function App() {
       return;
     }
 
-    const saved = localStorage.getItem('registered_managers');
-    const managers = saved ? JSON.parse(saved) : {};
-    const lowerName = loginManagerName.trim().toLowerCase();
+    const trimmedName = loginManagerName.trim();
+    const lowerName = trimmedName.toLowerCase().replace(/\s+/g, '_');
 
-    if (!managers[lowerName]) {
-      // User not found -> Show popup to confirm creation of a new user
-      setPendingUsername(loginManagerName.trim());
-      setPendingPassword(loginPassword);
-      setShowSignUpPopup(true);
-      return;
+    if (supabase && isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase
+          .from('manager_accounts')
+          .select('username, password')
+          .eq('username', trimmedName)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (!data) {
+          // User not found in Supabase -> Show popup to confirm creation
+          setPendingUsername(trimmedName);
+          setPendingPassword(loginPassword);
+          setShowSignUpPopup(true);
+          return;
+        }
+
+        if (data.password !== loginPassword) {
+          setLocalAuthError("Incorrect password for this manager.");
+          return;
+        }
+
+        // Login successful via Supabase table
+        localStorage.setItem('logged_in_manager', trimmedName);
+        setPlayerName(trimmedName);
+        setUser({
+          id: 'local-' + lowerName,
+          email: trimmedName,
+          user_metadata: { username: trimmedName }
+        });
+        setLocalAuthSuccess(`Welcome back, Manager ${trimmedName}!`);
+        playSound('whistle');
+      } catch (err) {
+        setLocalAuthError(err.message);
+      }
+    } else {
+      // Local fallback
+      const saved = localStorage.getItem('registered_managers');
+      const managers = saved ? JSON.parse(saved) : {};
+
+      if (!managers[lowerName]) {
+        // User not found -> Show popup to confirm creation
+        setPendingUsername(trimmedName);
+        setPendingPassword(loginPassword);
+        setShowSignUpPopup(true);
+        return;
+      }
+
+      if (managers[lowerName] !== loginPassword) {
+        setLocalAuthError("Incorrect password for this manager.");
+        return;
+      }
+
+      // Login successful locally
+      localStorage.setItem('logged_in_manager', trimmedName);
+      setPlayerName(trimmedName);
+      setUser({
+        id: 'local-' + lowerName,
+        email: trimmedName,
+        user_metadata: { username: trimmedName }
+      });
+      setLocalAuthSuccess(`Welcome back, Manager ${trimmedName}!`);
+      playSound('whistle');
     }
-
-    if (managers[lowerName] !== loginPassword) {
-      setLocalAuthError("Incorrect password for this manager.");
-      return;
-    }
-
-    // Login successful
-    const actualName = loginManagerName.trim();
-    localStorage.setItem('logged_in_manager', actualName);
-    setPlayerName(actualName);
-    setUser({
-      id: 'local-' + lowerName,
-      email: actualName,
-      user_metadata: { username: actualName }
-    });
-    setLocalAuthSuccess(`Welcome back, Manager ${actualName}!`);
-    playSound('whistle');
   };
 
-  const handleConfirmSignUp = () => {
+  const handleConfirmSignUp = async () => {
     if (!pendingUsername || !pendingPassword) return;
     
     if (pendingPassword.length < 6) {
@@ -505,29 +545,67 @@ export default function App() {
       return;
     }
 
-    const saved = localStorage.getItem('registered_managers');
-    const managers = saved ? JSON.parse(saved) : {};
-    const lowerName = pendingUsername.toLowerCase();
+    const trimmedName = pendingUsername.trim();
+    const lowerName = trimmedName.toLowerCase().replace(/\s+/g, '_');
 
-    // Save registration
-    managers[lowerName] = pendingPassword;
-    localStorage.setItem('registered_managers', JSON.stringify(managers));
+    if (supabase && isSupabaseConfigured) {
+      try {
+        const { error } = await supabase
+          .from('manager_accounts')
+          .insert({
+            username: trimmedName,
+            password: pendingPassword
+          });
 
-    // Auto log-in
-    localStorage.setItem('logged_in_manager', pendingUsername);
-    setPlayerName(pendingUsername);
-    setUser({
-      id: 'local-' + lowerName,
-      email: pendingUsername,
-      user_metadata: { username: pendingUsername }
-    });
-    setLocalAuthSuccess(`Profile created! Welcome, Manager ${pendingUsername}.`);
-    playSound('whistle');
-    
-    // Reset states
-    setShowSignUpPopup(false);
-    setPendingUsername("");
-    setPendingPassword("");
+        if (error) {
+          if (error.message.includes("duplicate key")) {
+            throw new Error("This manager name is already registered. Try signing in!");
+          }
+          throw error;
+        }
+
+        // Auto login
+        localStorage.setItem('logged_in_manager', trimmedName);
+        setPlayerName(trimmedName);
+        setUser({
+          id: 'local-' + lowerName,
+          email: trimmedName,
+          user_metadata: { username: trimmedName }
+        });
+        setLocalAuthSuccess(`Profile created in Supabase! Welcome, Manager ${trimmedName}.`);
+        playSound('whistle');
+      } catch (err) {
+        setLocalAuthError(err.message);
+      } finally {
+        setShowSignUpPopup(false);
+        setPendingUsername("");
+        setPendingPassword("");
+      }
+    } else {
+      // Local fallback
+      const saved = localStorage.getItem('registered_managers');
+      const managers = saved ? JSON.parse(saved) : {};
+
+      // Save registration
+      managers[lowerName] = pendingPassword;
+      localStorage.setItem('registered_managers', JSON.stringify(managers));
+
+      // Auto log-in
+      localStorage.setItem('logged_in_manager', trimmedName);
+      setPlayerName(trimmedName);
+      setUser({
+        id: 'local-' + lowerName,
+        email: trimmedName,
+        user_metadata: { username: trimmedName }
+      });
+      setLocalAuthSuccess(`Profile created! Welcome, Manager ${trimmedName}.`);
+      playSound('whistle');
+
+      // Reset states
+      setShowSignUpPopup(false);
+      setPendingUsername("");
+      setPendingPassword("");
+    }
   };
 
   const handleSignUp = async (e) => {
@@ -658,6 +736,7 @@ export default function App() {
             score_b
           )
         `)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
