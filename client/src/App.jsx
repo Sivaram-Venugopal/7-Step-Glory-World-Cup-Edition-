@@ -428,26 +428,35 @@ export default function App() {
 
     if (supabase && isSupabaseConfigured) {
       try {
-        const virtualEmail = `${lowerName}@manager.local`;
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: virtualEmail,
-          password: loginPassword
-        });
+        const { data, error } = await supabase
+          .from('manager_accounts')
+          .select('username, password')
+          .eq('username', trimmedName)
+          .maybeSingle();
 
-        if (error) {
-          if (error.message.toLowerCase().includes("invalid login credentials")) {
-            // User not found in Supabase Auth -> Show popup to confirm creation
-            setPendingUsername(trimmedName);
-            setPendingPassword(loginPassword);
-            setShowSignUpPopup(true);
-            return;
-          }
-          throw error;
+        if (error) throw error;
+
+        if (!data) {
+          // User not found in Supabase -> Show popup to confirm creation
+          setPendingUsername(trimmedName);
+          setPendingPassword(loginPassword);
+          setShowSignUpPopup(true);
+          return;
         }
 
-        // Login successful via Supabase
+        if (data.password !== loginPassword) {
+          setLocalAuthError("Incorrect password for this manager.");
+          return;
+        }
+
+        // Login successful via Supabase table
         localStorage.setItem('logged_in_manager', trimmedName);
         setPlayerName(trimmedName);
+        setUser({
+          id: 'local-' + lowerName,
+          email: trimmedName,
+          user_metadata: { username: trimmedName }
+        });
         setLocalAuthSuccess(`Welcome back, Manager ${trimmedName}!`);
         playSound('whistle');
       } catch (err) {
@@ -498,23 +507,28 @@ export default function App() {
 
     if (supabase && isSupabaseConfigured) {
       try {
-        const virtualEmail = `${lowerName}@manager.local`;
-        const { data, error } = await supabase.auth.signUp({
-          email: virtualEmail,
-          password: pendingPassword,
-          options: {
-            data: {
-              username: trimmedName
-            }
+        const { error } = await supabase
+          .from('manager_accounts')
+          .insert({
+            username: trimmedName,
+            password: pendingPassword
+          });
+
+        if (error) {
+          if (error.message.includes("duplicate key")) {
+            throw new Error("This manager name is already registered. Try signing in!");
           }
-        });
+          throw error;
+        }
 
-        if (error) throw error;
-
-        // Auto login is handled by the onAuthStateChange hook,
-        // but we can pre-set the local storage name
+        // Auto login
         localStorage.setItem('logged_in_manager', trimmedName);
         setPlayerName(trimmedName);
+        setUser({
+          id: 'local-' + lowerName,
+          email: trimmedName,
+          user_metadata: { username: trimmedName }
+        });
         setLocalAuthSuccess(`Profile created in Supabase! Welcome, Manager ${trimmedName}.`);
         playSound('whistle');
       } catch (err) {
@@ -679,6 +693,7 @@ export default function App() {
             score_b
           )
         `)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;

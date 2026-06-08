@@ -56,10 +56,10 @@ CREATE POLICY "Allow public read access to managers"
 ON public.managers FOR SELECT USING (true);
 
 
--- 4. Create Tournaments Table (Linked to Supabase Auth Users)
+-- 4. Create Tournaments Table (Linked to custom manager profiles)
 CREATE TABLE public.tournaments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
+    user_id TEXT NOT NULL,
     user_name TEXT NOT NULL,
     user_team TEXT NOT NULL,
     type TEXT NOT NULL CHECK (type IN ('AI', 'Friend')),
@@ -71,17 +71,17 @@ CREATE TABLE public.tournaments (
 -- Enable RLS on tournaments
 ALTER TABLE public.tournaments ENABLE ROW LEVEL SECURITY;
 
--- Users can only view their own tournaments
-CREATE POLICY "Users can view own tournaments" 
-ON public.tournaments FOR SELECT USING (auth.uid() = user_id);
+-- Allow public read access to tournaments (filtered on client by user_name)
+CREATE POLICY "Allow public read access to tournaments" 
+ON public.tournaments FOR SELECT USING (true);
 
--- Users can insert their own tournaments
-CREATE POLICY "Users can insert own tournaments" 
-ON public.tournaments FOR INSERT WITH CHECK (auth.uid() = user_id);
+-- Allow public insert access to tournaments
+CREATE POLICY "Allow public insert access to tournaments" 
+ON public.tournaments FOR INSERT WITH CHECK (true);
 
--- Users can update their own tournaments
-CREATE POLICY "Users can update own tournaments" 
-ON public.tournaments FOR UPDATE USING (auth.uid() = user_id);
+-- Allow public update access to tournaments
+CREATE POLICY "Allow public update access to tournaments" 
+ON public.tournaments FOR UPDATE USING (true);
 
 
 -- 5. Create Tournament Matches Table
@@ -99,24 +99,29 @@ CREATE TABLE public.tournament_matches (
 -- Enable RLS on tournament_matches
 ALTER TABLE public.tournament_matches ENABLE ROW LEVEL SECURITY;
 
--- Users can view matches of their own tournaments
-CREATE POLICY "Users can view own tournament matches" 
-ON public.tournament_matches FOR SELECT 
-USING (
-    EXISTS (
-        SELECT 1 FROM public.tournaments 
-        WHERE tournaments.id = tournament_matches.tournament_id 
-        AND tournaments.user_id = auth.uid()
-    )
+-- Allow public read access to matches
+CREATE POLICY "Allow public read access to tournament_matches" 
+ON public.tournament_matches FOR SELECT USING (true);
+
+-- Allow public insert access to matches
+CREATE POLICY "Allow public insert access to tournament_matches" 
+ON public.tournament_matches FOR INSERT WITH CHECK (true);
+
+
+-- 6. Create Manager Accounts Table for custom username/password login
+CREATE TABLE public.manager_accounts (
+    username TEXT PRIMARY KEY,
+    password TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Users can insert matches of their own tournaments
-CREATE POLICY "Users can insert own tournament matches" 
-ON public.tournament_matches FOR INSERT 
-WITH CHECK (
-    EXISTS (
-        SELECT 1 FROM public.tournaments 
-        WHERE tournaments.id = tournament_matches.tournament_id 
-        AND tournaments.user_id = auth.uid()
-    )
-);
+-- Enable RLS
+ALTER TABLE public.manager_accounts ENABLE ROW LEVEL SECURITY;
+
+-- Allow public read access to verify accounts
+CREATE POLICY "Allow public read access to manager_accounts"
+ON public.manager_accounts FOR SELECT USING (true);
+
+-- Allow public insert access to register new accounts
+CREATE POLICY "Allow public insert access to manager_accounts"
+ON public.manager_accounts FOR INSERT WITH CHECK (true);
