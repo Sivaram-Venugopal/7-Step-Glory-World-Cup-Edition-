@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { 
   Trophy, Users, User, ArrowRight, Play, RotateCcw, 
-  Settings, Shield, ChevronRight, CheckCircle2, AlertCircle, Sparkles, RefreshCw
+  Settings, Shield, ChevronRight, CheckCircle2, AlertCircle, Sparkles, RefreshCw,
+  LogOut, Calendar, Award, Eye, EyeOff
 } from 'lucide-react';
+import { supabase, isSupabaseConfigured } from './supabase.js';
 
 const SOCKET_URL = window.location.hostname === 'localhost' 
   ? 'http://localhost:5000' 
@@ -266,6 +268,178 @@ export default function App() {
     }, 1000);
   };
 
+  // Supabase Authentication states
+  const [session, setSession] = useState(null);
+  const [user, setUser] = useState(null);
+  const [authMode, setAuthMode] = useState(isSupabaseConfigured ? "LOGIN" : "GUEST"); // LOGIN, SIGNUP, GUEST
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState("");
+
+  // Supabase Tournament History states
+  const [supabaseTournamentId, setSupabaseTournamentId] = useState(null);
+  const [historicalRuns, setHistoricalRuns] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [expandedRunId, setExpandedRunId] = useState(null);
+
+  // Supabase Sync Hooks & Functions
+  useEffect(() => {
+    if (!supabase) return;
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user || null);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setUser(session?.user || null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleSignUp = async (e) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    setAuthError("");
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            username: email.split('@')[0]
+          }
+        }
+      });
+      if (error) throw error;
+      setAuthError("Check your email for confirmation link!");
+    } catch (err) {
+      setAuthError(err.message);
+    }
+  };
+
+  const handleLogIn = async (e) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    setAuthError("");
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
+      if (error) throw error;
+    } catch (err) {
+      setAuthError(err.message);
+    }
+  };
+
+  const handleLogOut = async () => {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    setSession(null);
+    setUser(null);
+    setAuthMode("LOGIN");
+  };
+
+  const startSupabaseTournament = async (roomState) => {
+    if (!supabase || !user) return;
+
+    try {
+      const userPlayer = roomState.players.find(p => p.id === socket?.id) || roomState.players[0];
+      const { data, error } = await supabase
+        .from('tournaments')
+        .insert({
+          user_id: user.id,
+          user_name: user.user_metadata?.username || user.email.split('@')[0],
+          user_team: userPlayer?.teamName || "Brazil",
+          type: roomState.isSinglePlayer ? 'AI' : 'Friend',
+          stages_played: 0,
+          won_cup: false
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      setSupabaseTournamentId(data.id);
+    } catch (err) {
+      console.error("Error creating tournament record:", err.message);
+    }
+  };
+
+  const saveMatchToSupabase = async (matchDetails, roomState) => {
+    if (!supabase || !user || !supabaseTournamentId) return;
+
+    try {
+      const { error: matchErr } = await supabase
+        .from('tournament_matches')
+        .insert({
+          tournament_id: supabaseTournamentId,
+          match_num: matchDetails.matchNum,
+          team_a_name: matchDetails.teamAName,
+          team_b_name: matchDetails.teamBName,
+          score_a: matchDetails.scoreA,
+          score_b: matchDetails.scoreB,
+          events: matchDetails.events
+        });
+
+      if (matchErr) throw matchErr;
+
+      const wonCup = roomState.status === 'finished' && matchDetails.matchNum >= 8 && (matchDetails.scoreA > matchDetails.scoreB);
+      const { error: tournErr } = await supabase
+        .from('tournaments')
+        .update({
+          stages_played: matchDetails.matchNum,
+          won_cup: wonCup
+        })
+        .eq('id', supabaseTournamentId);
+
+      if (tournErr) throw tournErr;
+    } catch (err) {
+      console.error("Error saving match details:", err.message);
+    }
+  };
+
+  const loadTournamentHistory = async () => {
+    if (!supabase || !user) return;
+    setLoadingHistory(true);
+    try {
+      const { data, error } = await supabase
+        .from('tournaments')
+        .select(`
+          id,
+          user_team,
+          type,
+          stages_played,
+          won_cup,
+          created_at,
+          tournament_matches (
+            match_num,
+            team_a_name,
+            team_b_name,
+            score_a,
+            score_b
+          )
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setHistoricalRuns(data);
+    } catch (err) {
+      console.error("Error loading tournament history:", err.message);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeDashboardTab === "HISTORY") {
+      loadTournamentHistory();
+    }
+  }, [activeDashboardTab, user]);
+
   // Audio Synth
   const playSound = (type) => {
     try {
@@ -335,6 +509,14 @@ export default function App() {
       setRoom(roomState);
       const lp = roomState.players.find(p => p.id === s.id);
       setLocalPlayer(lp);
+
+      // Initialize Supabase tournament record if starting tournament
+      if (roomState.status === 'tournament' && roomState.matchesPlayed === 0) {
+        const isHost = lp?.isHost || roomState.players[0]?.id === s.id;
+        if (isHost && !supabaseTournamentId) {
+          startSupabaseTournament(roomState);
+        }
+      }
     });
 
     s.on('draft_options', (data) => {
@@ -356,6 +538,13 @@ export default function App() {
       setShootoutEvent(null);
       setBallPos({ x: '50%', y: '50%' });
       playSound('whistle');
+
+      // Save match to Supabase (Host only saves the record in multiplayer to prevent double writing!)
+      const lp = roomState.players.find(p => p.id === s.id);
+      const isHost = lp?.isHost || roomState.players[0]?.id === s.id;
+      if (isHost) {
+        saveMatchToSupabase(matchDetails, roomState);
+      }
     });
 
     return () => {
@@ -608,11 +797,128 @@ export default function App() {
     return running;
   };
 
+  // Render Auth screen if Supabase is active and not logged in / bypass guest
+  if (isSupabaseConfigured && authMode !== "GUEST" && !user) {
+    return (
+      <div className="landing-wrapper">
+        <div className="dashboard-panel max-w-md">
+          <div className="text-center mb-6">
+            <div className="flex justify-center mb-2">
+              <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
+            </div>
+            <h1 className="logo-heading">WORLD CUP DRAFT</h1>
+            <h2 className="sub-heading">FIFA 2026 EDITION</h2>
+            <p className="text-xs" style={{ color: 'var(--color-text-dim)', marginTop: '6px', fontWeight: 800 }}>MEMBER PORTAL</p>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex justify-around border-b pb-2 mb-2">
+              <button 
+                onClick={() => { setAuthMode("LOGIN"); setAuthError(""); }}
+                className={`tab-btn ${authMode === "LOGIN" ? "active" : ""}`}
+                style={{ fontSize: '0.8rem' }}
+              >
+                Sign In
+              </button>
+              <button 
+                onClick={() => { setAuthMode("SIGNUP"); setAuthError(""); }}
+                className={`tab-btn ${authMode === "SIGNUP" ? "active" : ""}`}
+                style={{ fontSize: '0.8rem' }}
+              >
+                Register
+              </button>
+            </div>
+
+            {authError && (
+              <div className={`alert-box ${authError.includes("confirm") ? "alert-box-amber" : "alert-box-red"} text-xs`}>
+                {authError}
+              </div>
+            )}
+
+            <form onSubmit={authMode === "LOGIN" ? handleLogIn : handleSignUp} className="space-y-4">
+              <div>
+                <label className="block text-xs uppercase font-bold mb-1" style={{ color: 'var(--color-text-dim)' }}>Email Address</label>
+                <input 
+                  type="email" 
+                  placeholder="your-email@example.com" 
+                  value={email} 
+                  onChange={e => setEmail(e.target.value)}
+                  className="sports-input"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs uppercase font-bold mb-1" style={{ color: 'var(--color-text-dim)' }}>Password</label>
+                <div style={{ position: 'relative' }}>
+                  <input 
+                    type={showPassword ? "text" : "password"} 
+                    placeholder="••••••••" 
+                    value={password} 
+                    onChange={e => setPassword(e.target.value)}
+                    className="sports-input"
+                    minLength="6"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    style={{ position: 'absolute', right: '12px', top: '15px', background: 'transparent', border: 'none', color: 'var(--color-text-dim)', cursor: 'pointer' }}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+
+              <button type="submit" className="btn-sports w-full mt-2">
+                {authMode === "LOGIN" ? "Sign In" : "Create Account"}
+              </button>
+            </form>
+
+            <div className="text-center pt-2 border-t">
+              <button 
+                onClick={() => setAuthMode("GUEST")}
+                className="btn-sports-secondary w-full"
+                style={{ fontSize: '0.8rem', padding: '10px' }}
+              >
+                ⚡ Play as Guest (No Cloud Save)
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Render Landing Page
   if (!room) {
     return (
       <div className="landing-wrapper">
         <div className="dashboard-panel max-w-md">
+          {user && (
+            <div className="flex justify-between items-center p-2 rounded-lg mb-4" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(46, 204, 113, 0.15)', fontSize: '0.75rem' }}>
+              <span style={{ color: 'var(--color-text-dim)' }}>Logged in as: <b>{user.email}</b></span>
+              <button 
+                onClick={handleLogOut} 
+                className="btn-sports-secondary" 
+                style={{ padding: '4px 8px', fontSize: '0.65rem' }}
+              >
+                <LogOut size={12} style={{ marginRight: '4px' }} /> Sign Out
+              </button>
+            </div>
+          )}
+          {!user && isSupabaseConfigured && (
+            <div className="flex justify-between items-center p-2 rounded-lg mb-4" style={{ background: 'rgba(241, 196, 15, 0.05)', border: '1px solid rgba(241, 196, 15, 0.15)', fontSize: '0.75rem' }}>
+              <span style={{ color: 'var(--color-gold)' }}>Guest Session</span>
+              <button 
+                onClick={() => setAuthMode("LOGIN")} 
+                className="btn-sports" 
+                style={{ padding: '4px 8px', fontSize: '0.65rem', background: 'var(--color-gold)', color: '#000', border: 'none' }}
+              >
+                Sign In
+              </button>
+            </div>
+          )}
           <div className="text-center mb-6">
             <div className="flex justify-center mb-2">
               <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
@@ -1154,6 +1460,7 @@ export default function App() {
           <button onClick={() => setActiveDashboardTab("SCOUTING")} className={`tab-btn ${activeDashboardTab === "SCOUTING" ? 'active' : ''}`}>Squad Scouting</button>
           {room.isSinglePlayer && <button onClick={() => setActiveDashboardTab("STANDINGS")} className={`tab-btn ${activeDashboardTab === "STANDINGS" ? 'active' : ''}`}>All Groups Standings</button>}
           <button onClick={() => setActiveDashboardTab("STATS")} className={`tab-btn ${activeDashboardTab === "STATS" ? 'active' : ''}`}>Leaderboards</button>
+          {user && <button onClick={() => setActiveDashboardTab("HISTORY")} className={`tab-btn ${activeDashboardTab === "HISTORY" ? 'active' : ''}`}>🏆 Tournament History</button>}
         </div>
 
         {/* --- TAB 1: SQUAD SCOUTING & CONTROLS --- */}
@@ -1475,6 +1782,100 @@ export default function App() {
               </div>
             </div>
 
+          </div>
+        )}
+
+        {/* --- TAB 4: TOURNAMENT HISTORY (SUPABASE CLOUD HISTORY) --- */}
+        {activeDashboardTab === "HISTORY" && user && (
+          <div className="dashboard-panel space-y-6">
+            <h3 className="text-sm uppercase font-bold border-b pb-2 flex items-center gap-2" style={{ color: 'var(--color-gold)' }}>
+              <Award size={16} /> Cloud Campaign History Log
+            </h3>
+
+            {loadingHistory ? (
+              <div className="text-center py-8 text-xs animate-pulse" style={{ color: 'var(--color-text-dim)' }}>
+                LOADING CLOUD HISTORY...
+              </div>
+            ) : historicalRuns.length === 0 ? (
+              <div className="text-center py-8 text-xs" style={{ color: 'var(--color-text-dim)' }}>
+                No completed tournament logs found in your account history.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {historicalRuns.map((run) => {
+                  const isExpanded = expandedRunId === run.id;
+                  const dateStr = new Date(run.created_at).toLocaleDateString(undefined, {
+                    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                  });
+
+                  const getStageLabel = (stagesPlayed, wonCup) => {
+                    if (wonCup) return "🏆 CHAMPIONS!";
+                    if (stagesPlayed <= 3) return "Group Stage";
+                    if (stagesPlayed === 4) return "Round of 32";
+                    if (stagesPlayed === 5) return "Round of 16";
+                    if (stagesPlayed === 6) return "Quarterfinal";
+                    if (stagesPlayed === 7) return "Semifinal";
+                    if (stagesPlayed === 8) return "Runner-up";
+                    return `Match ${stagesPlayed}`;
+                  };
+
+                  return (
+                    <div key={run.id} className="p-4 rounded-lg" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(46,204,113,0.15)' }}>
+                      <div className="flex justify-between items-center flex-wrap gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-white text-sm">{run.user_team}</span>
+                            <span className="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded uppercase font-semibold">
+                              VS {run.type}
+                            </span>
+                          </div>
+                          <p className="text-[10px] mt-1" style={{ color: 'var(--color-text-dim)' }}>
+                            <Calendar size={10} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} /> {dateStr}
+                          </p>
+                        </div>
+                        
+                        <div className="flex items-center gap-4">
+                          <span className="text-xs font-extrabold" style={{ color: run.won_cup ? 'var(--color-gold)' : 'var(--color-white)' }}>
+                            {getStageLabel(run.stages_played, run.won_cup)}
+                          </span>
+                          <button 
+                            onClick={() => setExpandedRunId(isExpanded ? null : run.id)}
+                            className="btn-sports-secondary"
+                            style={{ padding: '6px 12px', fontSize: '0.68rem' }}
+                          >
+                            {isExpanded ? 'Hide Details' : 'View Matches'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Expanded matches list */}
+                      {isExpanded && (
+                        <div className="mt-4 pt-4 border-t border-dashed" style={{ borderColor: 'rgba(46,204,113,0.2)' }}>
+                          <h4 className="text-[10px] uppercase font-bold mb-2 text-slate-400">Match Progression:</h4>
+                          <div className="space-y-2">
+                            {run.tournament_matches?.sort((a,b) => a.match_num - b.match_num).map((match, mIdx) => {
+                              const wonMatch = match.score_a > match.score_b;
+                              const drawMatch = match.score_a === match.score_b;
+                              return (
+                                <div key={mIdx} className="flex justify-between items-center text-xs p-2 rounded" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                                  <span style={{ color: 'var(--color-text-dim)' }}>Match {match.match_num}</span>
+                                  <span className="font-semibold text-white">
+                                    {match.team_a_name} <span style={{ color: 'var(--color-gold)' }}>{match.score_a} - {match.score_b}</span> {match.team_b_name}
+                                  </span>
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${wonMatch ? 'bg-green-500/10 text-green-400' : drawMatch ? 'bg-slate-500/10 text-slate-400' : 'bg-red-500/10 text-red-400'}`}>
+                                    {wonMatch ? 'W' : drawMatch ? 'D' : 'L'}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
