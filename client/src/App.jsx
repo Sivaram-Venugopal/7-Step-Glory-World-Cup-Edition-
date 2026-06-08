@@ -1,0 +1,1676 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { io } from 'socket.io-client';
+import { 
+  Trophy, Users, User, ArrowRight, Play, RotateCcw, 
+  Settings, Shield, ChevronRight, CheckCircle2, AlertCircle, Sparkles, RefreshCw
+} from 'lucide-react';
+
+const SOCKET_URL = window.location.hostname === 'localhost' 
+  ? 'http://localhost:5000' 
+  : `http://${window.location.hostname}:5000`;
+
+const TACTIC_DETAILS = {
+  "tiki-taka": { name: "Tiki-Taka", desc: "Focuses on short passing, ball control, and positional play.", color: "#2ecc71" },
+  "counter-attack": { name: "Counter-Attack", desc: "Solid defensive block with explosive transitions on breaks.", color: "#ff4b4b" },
+  "gegenpress": { name: "Gegenpress", desc: "Aggressive defensive pressure high up the pitch to win back possession.", color: "#2ecc71" },
+  "long-ball": { name: "Long Ball", desc: "Direct vertical distribution bypassing midfield to target tall forwards.", color: "#f1c40f" },
+  "park-the-bus": { name: "Park the Bus", desc: "Extremely deep defensive block prioritizing absolute safety.", color: "#8e9bb4" },
+  "wing-play": { name: "Wing Play", desc: "Spreads play wide to cross balls into the box from the flanks.", color: "#f1c40f" }
+};
+
+const ALL_HISTORICAL_NATIONS = [
+  "Algeria", "Angola", "Argentina", "Australia", "Austria", "Belgium", "Bolivia", "Bosnia and Herzegovina", "Brazil", "Bulgaria",
+  "Cameroon", "Canada", "Chile", "China", "Colombia", "Costa Rica", "Croatia", "Cuba", "Czech Republic", "Denmark",
+  "Ecuador", "Egypt", "El Salvador", "England", "France", "Germany", "Ghana", "Greece", "Haiti", "Honduras",
+  "Hungary", "Iceland", "Iran", "Iraq", "Ireland", "Israel", "Italy", "Ivory Coast", "Jamaica", "Japan",
+  "Kuwait", "Morocco", "Netherlands", "New Zealand", "Nigeria", "North Korea", "Northern Ireland", "Norway", "Panama", "Paraguay",
+  "Peru", "Poland", "Portugal", "Qatar", "Romania", "Russia", "Saudi Arabia", "Scotland", "Senegal", "Serbia",
+  "Slovakia", "Slovenia", "South Africa", "South Korea", "Spain", "Sweden", "Switzerland", "Togo", "Trinidad and Tobago", "Tunisia",
+  "Turkey", "Ukraine", "United Arab Emirates", "USA", "Uruguay", "Wales"
+];
+
+const FORMATIONS = ["4-3-3", "4-4-2", "3-5-2", "5-4-1", "4-2-3-1", "3-4-3"];
+
+function getPositionLabel(formation, index) {
+  const layouts = {
+    "4-3-3": ["GK", "LB", "CB", "CB", "RB", "CM", "CDM", "CM", "LW", "ST", "RW"],
+    "4-4-2": ["GK", "LB", "CB", "CB", "RB", "LM", "CM", "CM", "RM", "ST", "ST"],
+    "3-5-2": ["GK", "CB", "CB", "CB", "LM", "CM", "CDM", "CM", "RM", "ST", "ST"],
+    "5-4-1": ["GK", "LWB", "CB", "CB", "CB", "RWB", "LM", "CM", "CM", "RM", "ST"],
+    "4-2-3-1": ["GK", "LB", "CB", "CB", "RB", "LDM", "RDM", "LM", "CAM", "RM", "ST"],
+    "3-4-3": ["GK", "CB", "CB", "CB", "LM", "CM", "CM", "RM", "LW", "ST", "RW"]
+  };
+  return layouts[formation]?.[index] || "SUB";
+}
+
+const getPlayerPositions = (formation) => {
+  const layouts = {
+    "4-4-2": [
+      { top: '88%', left: '50%' },
+      { top: '70%', left: '15%' }, { top: '72%', left: '38%' }, { top: '72%', left: '62%' }, { top: '70%', left: '85%' },
+      { top: '48%', left: '15%' }, { top: '50%', left: '38%' }, { top: '50%', left: '62%' }, { top: '48%', left: '85%' },
+      { top: '24%', left: '35%' }, { top: '24%', left: '65%' }
+    ],
+    "3-5-2": [
+      { top: '88%', left: '50%' },
+      { top: '72%', left: '22%' }, { top: '74%', left: '50%' }, { top: '72%', left: '78%' },
+      { top: '52%', left: '15%' }, { top: '50%', left: '35%' }, { top: '54%', left: '50%' }, { top: '50%', left: '65%' }, { top: '52%', left: '85%' },
+      { top: '24%', left: '35%' }, { top: '24%', left: '65%' }
+    ],
+    "5-4-1": [
+      { top: '88%', left: '50%' },
+      { top: '70%', left: '12%' }, { top: '72%', left: '32%' }, { top: '74%', left: '50%' }, { top: '72%', left: '68%' }, { top: '70%', left: '88%' },
+      { top: '48%', left: '20%' }, { top: '50%', left: '40%' }, { top: '50%', left: '60%' }, { top: '48%', left: '80%' },
+      { top: '22%', left: '50%' }
+    ],
+    "4-2-3-1": [
+      { top: '88%', left: '50%' },
+      { top: '70%', left: '15%' }, { top: '72%', left: '38%' }, { top: '72%', left: '62%' }, { top: '70%', left: '85%' },
+      { top: '54%', left: '35%' }, { top: '54%', left: '65%' },
+      { top: '42%', left: '18%' }, { top: '38%', left: '50%' }, { top: '42%', left: '82%' },
+      { top: '22%', left: '50%' }
+    ],
+    "3-4-3": [
+      { top: '88%', left: '50%' },
+      { top: '72%', left: '22%' }, { top: '74%', left: '50%' }, { top: '72%', left: '78%' },
+      { top: '50%', left: '15%' }, { top: '52%', left: '38%' }, { top: '52%', left: '62%' }, { top: '50%', left: '85%' },
+      { top: '24%', left: '20%' }, { top: '20%', left: '50%' }, { top: '24%', left: '80%' }
+    ],
+    "4-3-3": [
+      { top: '88%', left: '50%' },
+      { top: '70%', left: '15%' }, { top: '72%', left: '38%' }, { top: '72%', left: '62%' }, { top: '70%', left: '85%' },
+      { top: '50%', left: '25%' }, { top: '54%', left: '50%' }, { top: '50%', left: '75%' },
+      { top: '24%', left: '20%' }, { top: '20%', left: '50%' }, { top: '24%', left: '80%' }
+    ]
+  };
+  return layouts[formation] || layouts["4-3-3"];
+};
+
+// Position compatibility checker helper
+function isPositionCompatible(playerPos, slotLabel) {
+  if (playerPos === "GK") return slotLabel === "GK";
+  if (playerPos === "DEF") return ["DEF", "LB", "CB", "RB", "LWB", "RWB"].includes(slotLabel);
+  if (playerPos === "MID") return ["MID", "CM", "CDM", "CAM", "LM", "RM"].includes(slotLabel);
+  if (playerPos === "FWD") return ["FWD", "ST", "LW", "RW"].includes(slotLabel);
+  return false;
+}
+
+// 38-0-0 style jersey rendering helpers
+const NATION_COLORS = {
+  "england": ['#ffffff', '#cf081b'],
+  "france": ['#00209f', '#ffffff'],
+  "brazil": ['#f1c40f', '#00209f'],
+  "argentina": ['#75aadb', '#ffffff'],
+  "portugal": ['#8c0424', '#046c4c'],
+  "germany": ['#ffffff', '#000000'],
+  "spain": ['#c0392b', '#f1c40f'],
+  "italy": ['#1f75fe', '#ffffff'],
+  "netherlands": ['#e67e22', '#000000'],
+  "croatia": ['#ffffff', '#cf081b'],
+  "uruguay": ['#5cb5e6', '#000000'],
+  "morocco": ['#c0392b', '#2ecc71'],
+  "japan": ['#000080', '#ffffff'],
+  "usa": ['#ffffff', '#00209f'],
+  "belgium": ['#c0392b', '#f1c40f'],
+  "senegal": ['#ffffff', '#27ae60'],
+  "mexico": ['#27ae60', '#ffffff'],
+  "canada": ['#c0392b', '#ffffff'],
+  "south korea": ['#e81e25', '#00209f'],
+  "australia": ['#f1c40f', '#27ae60'],
+  "cameroon": ['#27ae60', '#c0392b'],
+  "nigeria": ['#27ae60', '#ffffff'],
+  "ghana": ['#ffffff', '#000000'],
+  "ecuador": ['#f1c40f', '#00209f'],
+  "switzerland": ['#c0392b', '#ffffff'],
+  "poland": ['#ffffff', '#c0392b'],
+  "denmark": ['#c0392b', '#ffffff'],
+  "sweden": ['#f1c40f', '#00209f'],
+  "ukraine": ['#f1c40f', '#0080ff'],
+  "wales": ['#c0392b', '#ffffff'],
+  "saudi arabia": ['#27ae60', '#ffffff'],
+  "iran": ['#ffffff', '#27ae60'],
+  "tunisia": ['#ffffff', '#c0392b'],
+  "algeria": ['#ffffff', '#27ae60'],
+  "egypt": ['#c0392b', '#ffffff'],
+  "costa rica": ['#c0392b', '#00209f'],
+  "bulgaria": ['#ffffff', '#27ae60'],
+  "turkey": ['#c0392b', '#ffffff'],
+  "colombia": ['#f1c40f', '#00209f'],
+  "peru": ['#ffffff', '#c0392b'],
+  "chile": ['#c0392b', '#00209f'],
+  "austria": ['#c0392b', '#ffffff'],
+  "hungary": ['#c0392b', '#27ae60'],
+  "scotland": ['#0b2240', '#ffffff'],
+  "norway": ['#c0392b', '#00209f'],
+  "czech republic": ['#c0392b', '#ffffff'],
+  "greece": ['#0d5df2', '#ffffff'],
+  "serbia": ['#c0392b', '#ffffff']
+};
+
+function getNationColors(teamId) {
+  if (!teamId) return ['#2ecc71', '#ffffff']; // Default green/white
+  const lower = teamId.toLowerCase().replace(/_/g, ' ');
+  for (const country in NATION_COLORS) {
+    if (lower.includes(country)) {
+      return NATION_COLORS[country];
+    }
+  }
+  return ['#2ecc71', '#ffffff'];
+}
+
+const JERSEY_PATH = 'M22 6 L10 12 L4 26 L14 32 L20 27 L20 58 L44 58 L44 27 L50 32 L60 26 L54 12 L42 6 C42 6 38 12 32 12 C26 12 22 6 22 6 Z';
+function renderJerseySVG(teamId, initials, size = 42) {
+  const [bg, ink] = getNationColors(teamId);
+  return (
+    <svg viewBox="0 0 64 64" width={size} height={size} aria-hidden="true" style={{ display: 'block' }}>
+      <path d={JERSEY_PATH} fill={bg} stroke="rgba(255,255,255,.2)" strokeWidth="1.5"/>
+      <text x="32" y="44" textAnchor="middle" fontFamily="sans-serif" fontSize="16" fontWeight="900" fill={ink}>
+        {initials}
+      </text>
+    </svg>
+  );
+}
+
+function getInitials(name) {
+  if (!name) return '??';
+  const parts = name.replace(/\./g, '').split(/\s+/).filter(Boolean);
+  if (!parts.length) return '??';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function ovClass(o) {
+  if (o >= 90) return 'ov-90';
+  if (o >= 80) return 'ov-80';
+  if (o >= 75) return 'ov-75';
+  if (o >= 70) return 'ov-70';
+  return 'ov-low';
+}
+
+export default function App() {
+  const [socket, setSocket] = useState(null);
+  const [playerName, setPlayerName] = useState('');
+  const [roomId, setRoomId] = useState('');
+  const [isSinglePlayer, setIsSinglePlayer] = useState(false);
+  
+  const [room, setRoom] = useState(null);
+  const [localPlayer, setLocalPlayer] = useState(null);
+
+  // Drafting states
+  const [draftData, setDraftData] = useState(null); // { round, type, choices, teamName }
+  const [selectedCard, setSelectedCard] = useState(null); // Active player card chosen from roster
+  const [isSpinning, setIsSpinning] = useState(false);
+  const [spinDegree, setSpinDegree] = useState(0);
+  const [hasSpun, setHasSpun] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Bench Swap
+  const [starterSwapIndex, setStarterSwapIndex] = useState(null);
+
+  // Navigation tabs for tournament dashboard
+  const [activeDashboardTab, setActiveDashboardTab] = useState("SCOUTING"); // SCOUTING, STANDINGS, STATS
+  const [selectedStandingsGroup, setSelectedStandingsGroup] = useState("A"); // A..L
+
+  // Match Simulation
+  const [simulationActive, setSimulationActive] = useState(false);
+  const [simFinished, setSimFinished] = useState(false);
+  const [simDetails, setSimDetails] = useState(null);
+  const [visibleEvents, setVisibleEvents] = useState([]);
+  const [eventIndex, setEventIndex] = useState(0);
+  const eventListEndRef = useRef(null);
+
+  // Live Field & Interactive Shootout
+  const [ballPos, setBallPos] = useState({ x: '50%', y: '50%' });
+  const [alertMessage, setAlertMessage] = useState('');
+  const [shootoutState, setShootoutState] = useState(null); // 'shoot' | 'save' | null
+  const [shootoutEvent, setShootoutEvent] = useState(null);
+
+  const handleShootoutChoice = (spotIdx) => {
+    if (!shootoutEvent) return;
+
+    const spots = {
+      1: { x: '35%', y: '32%' },
+      2: { x: '50%', y: '30%' },
+      3: { x: '65%', y: '32%' },
+      4: { x: '34%', y: '45%' },
+      5: { x: '50%', y: '43%' },
+      6: { x: '66%', y: '45%' },
+      7: { x: '36%', y: '58%' },
+      8: { x: '50%', y: '56%' },
+      9: { x: '64%', y: '58%' }
+    };
+
+    const targetPos = spots[spotIdx] || { x: '50%', y: '43%' };
+    setBallPos(targetPos);
+    playSound('kick');
+
+    // Wait a brief moment to show ball travel, then reveal outcome
+    setTimeout(() => {
+      setVisibleEvents(prev => [...prev, shootoutEvent]);
+      setEventIndex(idx => idx + 1);
+
+      if (shootoutEvent.type === 'goal') {
+        setAlertMessage('GOAL!');
+        playSound('goal');
+      } else {
+        setAlertMessage('SAVED / MISSED!');
+        playSound('kick');
+      }
+
+      // Clear shootout states to resume simulation
+      setShootoutState(null);
+      setShootoutEvent(null);
+      
+      // Clear alert message after 1.5s
+      setTimeout(() => setAlertMessage(''), 1500);
+    }, 1000);
+  };
+
+  // Audio Synth
+  const playSound = (type) => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      if (type === 'whistle') {
+        osc.frequency.setValueAtTime(1100, ctx.currentTime);
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        osc.start();
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+        setTimeout(() => {
+          const osc2 = ctx.createOscillator();
+          const gain2 = ctx.createGain();
+          osc2.connect(gain2);
+          gain2.connect(ctx.destination);
+          osc2.frequency.setValueAtTime(1200, ctx.currentTime);
+          gain2.gain.setValueAtTime(0.1, ctx.currentTime);
+          osc2.start();
+          gain2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
+          osc2.stop(ctx.currentTime + 0.3);
+        }, 150);
+        osc.stop(ctx.currentTime + 0.2);
+      } else if (type === 'goal') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(100, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.5);
+        gain.gain.setValueAtTime(0.2, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.6);
+      } else if (type === 'kick') {
+        osc.frequency.setValueAtTime(70, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(20, ctx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.12);
+      } else if (type === 'card') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(800, ctx.currentTime);
+        osc.frequency.setValueAtTime(400, ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.35);
+      } else if (type === 'spin') {
+        osc.frequency.setValueAtTime(400, ctx.currentTime);
+        gain.gain.setValueAtTime(0.02, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.04);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.05);
+      }
+    } catch (e) {
+      console.warn("Audio Context blocked");
+    }
+  };
+
+  useEffect(() => {
+    const s = io(SOCKET_URL);
+    setSocket(s);
+
+    s.on('room_update', (roomState) => {
+      setRoom(roomState);
+      const lp = roomState.players.find(p => p.id === s.id);
+      setLocalPlayer(lp);
+    });
+
+    s.on('draft_options', (data) => {
+      setDraftData(data);
+      setHasSpun(false);
+      setIsSpinning(false);
+      setSelectedCard(null); // Clear active choice
+      setSearchQuery(''); // Reset search text
+    });
+
+    s.on('match_simulated', ({ matchDetails, roomState }) => {
+      setSimDetails(matchDetails);
+      setVisibleEvents([]);
+      setEventIndex(0);
+      setSimulationActive(true);
+      setSimFinished(false);
+      setRoom(roomState);
+      setShootoutState(null);
+      setShootoutEvent(null);
+      setBallPos({ x: '50%', y: '50%' });
+      playSound('whistle');
+    });
+
+    return () => {
+      s.disconnect();
+    };
+  }, []);
+
+  // Live simulation ticker scroll
+  useEffect(() => {
+    if (!simulationActive || !simDetails || shootoutState) return;
+
+    if (eventIndex < simDetails.events.length) {
+      const nextEv = simDetails.events[eventIndex];
+
+      // Check if this is a penalty kick that needs user interaction
+      if (nextEv.text.includes('[Penalty Shootout') && (nextEv.type === 'goal' || nextEv.type === 'miss')) {
+        const isUserKick = nextEv.text.includes(localPlayer?.teamName || "");
+        setShootoutEvent(nextEv);
+        setShootoutState(isUserKick ? 'shoot' : 'save');
+        setBallPos({ x: '50%', y: '75%' });
+        return;
+      }
+
+      const timer = setTimeout(() => {
+        setVisibleEvents(prev => [...prev, nextEv]);
+        setEventIndex(idx => idx + 1);
+
+        // Update ball position and alerts based on event type
+        if (nextEv.type === 'whistle') {
+          setBallPos({ x: '50%', y: '50%' });
+          if (nextEv.text.includes('decided from the spot') || nextEv.text.includes('PENALTY SHOOTOUT')) {
+            setAlertMessage('PENALTIES!');
+          } else if (nextEv.text.includes('final whistle') || nextEv.text.includes('Finished')) {
+            setAlertMessage('FULL TIME!');
+          } else {
+            setAlertMessage('KICK OFF!');
+          }
+          setTimeout(() => setAlertMessage(''), 1500);
+          playSound('whistle');
+        } else if (nextEv.type === 'goal') {
+          if (nextEv.team === 'A') {
+            setBallPos({ x: '92%', y: '50%' });
+            setAlertMessage('GOAL FOR YOU!');
+          } else {
+            setBallPos({ x: '8%', y: '50%' });
+            setAlertMessage('GOAL AGAINST!');
+          }
+          setTimeout(() => setAlertMessage(''), 1500);
+          playSound('goal');
+        } else if (nextEv.type === 'save') {
+          if (nextEv.team === 'A') {
+            setBallPos({ x: '12%', y: `${35 + Math.random() * 30}%` });
+            setAlertMessage('GREAT SAVE!');
+          } else {
+            setBallPos({ x: '88%', y: `${35 + Math.random() * 30}%` });
+            setAlertMessage('OPPONENT SAVE!');
+          }
+          setTimeout(() => setAlertMessage(''), 1500);
+          playSound('kick');
+        } else if (nextEv.type === 'miss') {
+          if (nextEv.team === 'A') {
+            setBallPos({ x: '92%', y: `${20 + Math.random() * 60}%` });
+          } else {
+            setBallPos({ x: '8%', y: `${20 + Math.random() * 60}%` });
+          }
+          setAlertMessage('MISSED!');
+          setTimeout(() => setAlertMessage(''), 1500);
+          playSound('kick');
+        } else if (nextEv.type === 'yellow_card') {
+          setAlertMessage('YELLOW CARD!');
+          setTimeout(() => setAlertMessage(''), 1500);
+          playSound('card');
+        } else if (nextEv.type === 'red_card') {
+          setAlertMessage('RED CARD!');
+          setTimeout(() => setAlertMessage(''), 1500);
+          playSound('card');
+        } else {
+          const isA = nextEv.team === 'A';
+          const rx = isA ? `${60 + Math.random() * 25}%` : `${15 + Math.random() * 25}%`;
+          const ry = `${20 + Math.random() * 60}%`;
+          setBallPos({ x: rx, y: ry });
+          playSound('kick');
+        }
+      }, 2500);
+      return () => clearTimeout(timer);
+    } else {
+      setSimFinished(true);
+    }
+  }, [simulationActive, eventIndex, simDetails, shootoutState, localPlayer]);
+
+  useEffect(() => {
+    eventListEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [visibleEvents]);
+
+  // Actions
+  const handleCreateRoom = (e) => {
+    e.preventDefault();
+    if (!playerName) return;
+    const rId = Math.random().toString(36).substring(2, 6).toUpperCase();
+    setRoomId(rId);
+    socket.emit('join_room', { roomId: rId, playerName, isHost: true, isSinglePlayer: false });
+  };
+
+  const handleJoinRoom = (e) => {
+    e.preventDefault();
+    if (!playerName || !roomId) return;
+    socket.emit('join_room', { roomId: roomId.toUpperCase(), playerName, isHost: false, isSinglePlayer: false });
+  };
+
+  const handleSinglePlayer = () => {
+    if (!playerName) return;
+    const rId = "SOLO-" + Math.random().toString(36).substring(2, 6).toUpperCase();
+    setRoomId(rId);
+    setIsSinglePlayer(true);
+    socket.emit('join_room', { roomId: rId, playerName, isHost: true, isSinglePlayer: true });
+  };
+
+  const handleUpdateSettings = (formation, tactic, teamName) => {
+    socket.emit('update_settings', { roomId, formation, tactic, teamName });
+  };
+
+  const handleStartGame = () => {
+    socket.emit('start_game', { roomId });
+  };
+
+  const handleSpinWheel = () => {
+    if (isSpinning) return;
+    setIsSpinning(true);
+    
+    const targetDeg = 720 + Math.floor(Math.random() * 360);
+    setSpinDegree(targetDeg);
+
+    let ticks = 0;
+    const tickInterval = setInterval(() => {
+      playSound('spin');
+      ticks++;
+      if (ticks > 15) clearInterval(tickInterval);
+    }, 120);
+
+    setTimeout(() => {
+      setHasSpun(true);
+      setIsSpinning(false);
+    }, 2000);
+  };
+
+  const isPlayerEligibleForDraft = (player) => {
+    if (!localPlayer || !room) return false;
+    
+    // Check if there is a compatible empty slot on the starting XI
+    const hasCompatiblePitchSlot = getPlayerPositions(localPlayer.formation).some((_, idx) => {
+      const isSlotEmpty = !localPlayer.squad[idx];
+      const slotLabel = getPositionLabel(localPlayer.formation, idx);
+      return isSlotEmpty && isPositionCompatible(player.position, slotLabel);
+    });
+
+    // Check if there is an empty bench slot (bench slots accept any player position!)
+    const hasEmptyBenchSlot = Object.keys(localPlayer.subs || {}).length < 3;
+
+    return hasCompatiblePitchSlot || hasEmptyBenchSlot;
+  };
+
+  // Select player from draft roster card
+  const handleSelectDraftPlayer = (player) => {
+    setSelectedCard(player);
+  };
+
+  const handleSelectDraftManager = (manager) => {
+    socket.emit('pick_draft_item', { roomId, type: 'manager', item: manager });
+    setDraftData(null);
+    setSelectedCard(null);
+  };
+
+  // Click on Pitch slot or Bench Sub during draft or swap (38-0-0.com style placement)
+  const handleSlotClick = (idx) => {
+    if (room.status === 'drafting') {
+      // Draft mode slot selection
+      if (selectedCard) {
+        const slotLabel = getPositionLabel(localPlayer.formation, idx);
+        if (isPositionCompatible(selectedCard.position, slotLabel) && !localPlayer.squad[idx]) {
+          socket.emit('pick_draft_item', { 
+            roomId, 
+            type: 'player', 
+            item: { ...selectedCard, teamId: room.spunTeams[room.draftRound - 1] }, 
+            slotType: 'squad', 
+            slotIndex: idx 
+          });
+          setDraftData(null);
+          setSelectedCard(null);
+        }
+      }
+    } else if (room.status === 'tournament') {
+      // Tournament mode starter-bench swap selection
+      if (starterSwapIndex === idx) {
+        setStarterSwapIndex(null);
+      } else {
+        setStarterSwapIndex(idx);
+      }
+    }
+  };
+
+  const handleSubClick = (subIdx) => {
+    if (room.status === 'drafting') {
+      // Draft mode sub slot selection
+      if (selectedCard && room.draftRound >= 12 && !localPlayer.subs[subIdx]) {
+        socket.emit('pick_draft_item', { 
+          roomId, 
+          type: 'player', 
+          item: { ...selectedCard, teamId: room.spunTeams[room.draftRound - 1] }, 
+          slotType: 'sub', 
+          slotIndex: subIdx 
+        });
+        setDraftData(null);
+        setSelectedCard(null);
+      }
+    } else if (room.status === 'tournament' && starterSwapIndex !== null) {
+      socket.emit('swap_player', { roomId, starterIdx: starterSwapIndex, subIdx });
+      setStarterSwapIndex(null);
+    }
+  };
+
+  const handleUpdateTactic = (tactic) => {
+    socket.emit('update_tournament_tactic', { roomId, tactic });
+  };
+
+  const handleReadyMatch = () => {
+    socket.emit('ready_match', { roomId });
+  };
+
+  const handleContinue = () => {
+    setSimulationActive(false);
+    setSimDetails(null);
+  };
+
+  const handleRestart = () => {
+    setSimulationActive(false);
+    setSimDetails(null);
+    setDraftData(null);
+    socket.emit('restart_game', { roomId });
+  };
+
+  // Get running score safely
+  const getRunningScore = () => {
+    let running = [0, 0];
+    if (!simDetails) return running;
+    for (let j = 0; j < eventIndex; j++) {
+      if (simDetails.events[j]?.score) {
+        running = simDetails.events[j].score;
+      }
+    }
+    return running;
+  };
+
+  // Render Landing Page
+  if (!room) {
+    return (
+      <div className="landing-wrapper">
+        <div className="dashboard-panel max-w-md">
+          <div className="text-center mb-6">
+            <div className="flex justify-center mb-2">
+              <Trophy size={46} style={{ color: 'var(--color-gold)' }} />
+            </div>
+            <h1 className="logo-heading">WORLD CUP DRAFT</h1>
+            <h2 className="sub-heading">7-Step Trophy Run</h2>
+            <p className="text-xs" style={{ color: 'var(--color-text-dim)', marginTop: '6px', fontWeight: 800 }}>FIFA 2026 EDITION</p>
+          </div>
+
+          <div className="stadium-banner-frame">
+            <img 
+              src="/world_cup_banner.png" 
+              alt="World Cup 2026 Stadium Banner" 
+              className="stadium-banner-img" 
+            />
+          </div>
+
+          <div className="space-y-6">
+            <div>
+              <label className="block text-xs uppercase font-bold mb-2" style={{ color: 'var(--color-green)' }}>Enter Manager Profile</label>
+              <input 
+                type="text" 
+                placeholder="Manager Name..." 
+                value={playerName} 
+                onChange={e => setPlayerName(e.target.value)}
+                className="sports-input" 
+              />
+            </div>
+
+            <div className="pt-4 border-t space-y-4">
+              <button 
+                onClick={handleSinglePlayer}
+                disabled={!playerName}
+                className="btn-sports w-full"
+              >
+                <Sparkles size={18} /> Play Campaign (VS AI)
+              </button>
+
+              <div className="text-center text-xs" style={{ color: 'var(--color-text-dim)' }}>— OR CREATE MULTIPLAYER DUEL —</div>
+
+              <div className="grid-2">
+                <button 
+                  onClick={handleCreateRoom}
+                  disabled={!playerName}
+                  className="btn-sports-secondary"
+                >
+                  Create
+                </button>
+                <div style={{ position: 'relative' }}>
+                  <input 
+                    type="text" 
+                    placeholder="Lobby Code" 
+                    value={roomId} 
+                    onChange={e => setRoomId(e.target.value)}
+                    className="sports-input text-center uppercase" 
+                  />
+                  <button 
+                    onClick={handleJoinRoom}
+                    disabled={!playerName || !roomId}
+                    className="btn-sports-secondary"
+                    style={{ position: 'absolute', right: '2px', top: '2px', padding: '10px', border: 'none', background: 'transparent' }}
+                  >
+                    <ArrowRight size={18} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Render Lobby screen
+  if (room.status === 'lobby') {
+    return (
+      <div className="max-w-6xl p-6 lobby-grid">
+        <div className="dashboard-panel space-y-6">
+          <div className="flex justify-between items-center border-b pb-4">
+            <div>
+              <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Lobby Code</p>
+              <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>{room.roomId}</h2>
+            </div>
+            {room.isSinglePlayer ? (
+              <span className="alert-box text-xs" style={{ padding: '6px 12px' }}>CAMPAIGN (48-TEAM STAGE)</span>
+            ) : (
+              <span className="alert-box alert-box-amber text-xs" style={{ padding: '6px 12px' }}>MULTIPLAYER DUEL</span>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-sm uppercase font-bold flex items-center gap-2">
+              <Users size={16} /> Managers Connected ({room.players.length})
+            </h3>
+            <div className="space-y-3">
+              {room.players.map((p, idx) => (
+                <div key={idx} className="flex justify-between items-center p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(46, 204, 113, 0.15)' }}>
+                  <div className="flex items-center gap-2">
+                    <User size={16} />
+                    <span className="font-semibold">{p.name} {p.teamName ? `(${p.teamName})` : ''}</span>
+                    {p.isHost && <span className="text-[10px] bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded border border-amber-500/20" style={{ marginLeft: '8px' }}>Host</span>}
+                  </div>
+                  <span className="text-xs" style={{ color: 'var(--color-text-dim)' }}>{p.formation} • {p.tactic}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {localPlayer && (
+            <div className="space-y-6 pt-4 border-t">
+              <h3 className="text-sm uppercase font-bold flex items-center gap-2">
+                <Settings size={16} /> Team Setup
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem' }}>
+                <div>
+                  <label className="block text-xs mb-2 uppercase font-semibold">Formation</label>
+                  <select 
+                    value={localPlayer.formation} 
+                    onChange={e => handleUpdateSettings(e.target.value, localPlayer.tactic, localPlayer.teamName)}
+                    className="sports-input"
+                  >
+                    {FORMATIONS.map(form => (
+                      <option key={form} value={form}>{form}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs mb-2 uppercase font-semibold">Tactic Style</label>
+                  <select 
+                    value={localPlayer.tactic} 
+                    onChange={e => handleUpdateSettings(localPlayer.formation, e.target.value, localPlayer.teamName)}
+                    className="sports-input"
+                  >
+                    {Object.keys(TACTIC_DETAILS).map(tacKey => (
+                      <option key={tacKey} value={tacKey}>{TACTIC_DETAILS[tacKey].name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs mb-2 uppercase font-semibold">Select Country</label>
+                  <select 
+                    value={localPlayer.teamName || "Brazil"} 
+                    onChange={e => handleUpdateSettings(localPlayer.formation, localPlayer.tactic, e.target.value)}
+                    className="sports-input"
+                  >
+                    {ALL_HISTORICAL_NATIONS.map(nation => (
+                      <option key={nation} value={nation}>{nation}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(46, 204, 113, 0.15)' }}>
+                <h4 className="text-xs uppercase font-bold mb-1" style={{ color: TACTIC_DETAILS[localPlayer.tactic]?.color }}>
+                  {TACTIC_DETAILS[localPlayer.tactic]?.name}
+                </h4>
+                <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>{TACTIC_DETAILS[localPlayer.tactic]?.desc}</p>
+              </div>
+            </div>
+          )}
+
+          {localPlayer?.isHost && (
+            <button 
+              onClick={handleStartGame}
+              disabled={!room.isSinglePlayer && room.players.length < 2}
+              className="btn-sports w-full"
+            >
+              Start Draft Phase
+            </button>
+          )}
+          {!localPlayer?.isHost && (
+            <p className="text-center text-xs animate-pulse" style={{ color: 'var(--color-text-dim)' }}>Awaiting host to initialize draft...</p>
+          )}
+        </div>
+
+        {/* Pitch preview */}
+        <div className="dashboard-panel">
+          <div className="text-center mb-4">
+            <h3 className="text-sm uppercase font-bold" style={{ color: 'var(--color-text-dim)' }}>Squad Lineup Pitch</h3>
+          </div>
+          <div className="pitch-container">
+            <div className="pitch-overlay"></div>
+            <div className="pitch-center-line"></div>
+            <div className="pitch-center-circle"></div>
+            <div className="pitch-penalty-box-top"></div>
+            <div className="pitch-penalty-box-bottom"></div>
+            
+            {localPlayer && getPlayerPositions(localPlayer.formation).map((pos, idx) => (
+              <div 
+                key={idx} 
+                className="pitch-node"
+                style={{ top: pos.top, left: pos.left }}
+              >
+                <div className="pitch-node-label">{getPositionLabel(localPlayer.formation, idx)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Render Drafting Phase
+  if (room.status === 'drafting') {
+    return (
+      <div className="max-w-6xl p-6 draft-grid">
+        <div className="dashboard-panel space-y-6">
+          <div className="flex justify-between items-center border-b pb-4">
+            <div>
+              <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>Draft Round {room.draftRound} of 15</p>
+              <h2 className="text-lg font-bold">Draft Player or Manager</h2>
+            </div>
+            <div className="text-right">
+              <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Spun Nation</p>
+              <p className="font-extrabold text-white text-md">
+                {room.spunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
+              </p>
+            </div>
+          </div>
+
+          {!draftData ? (
+            <div className="matrix-spinner-box">
+              <div className="matrix-spinner-reel">
+                {isSpinning 
+                  ? "SCOUTING..." 
+                  : room.spunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
+              </div>
+              <button 
+                onClick={handleSpinWheel}
+                disabled={isSpinning || hasSpun}
+                className="btn-sports"
+                style={{ maxWidth: '200px' }}
+              >
+                {isSpinning ? "SPINNING..." : "SPIN SCOUT REEL"}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              
+              {/* Step instructions */}
+              <div className="alert-box alert-box-amber text-xs font-semibold">
+                {selectedCard ? (
+                  <span>👉 <b>STEP 2:</b> Click a flashing node on the pitch map or substitute bench to assign <b>{selectedCard.name}</b>.</span>
+                ) : (
+                  <span>👉 <b>STEP 1:</b> Select a player from the roster list below, or draft the team manager if available.</span>
+                )}
+              </div>
+
+              {/* Team Manager choice block */}
+              {draftData.manager && (
+                <div className="manager-scout-card p-4 rounded-lg flex items-center justify-between animate-pulse" style={{ background: 'rgba(0,0,0,0.4)', border: '2px solid var(--color-gold)', marginBottom: '16px' }}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg" style={{ background: 'var(--color-gold)', color: '#000' }}>
+                      M
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-sm text-white">MANAGER: {draftData.manager.name} ({draftData.manager.country})</h4>
+                      <p className="text-xs" style={{ color: 'var(--color-gold)' }}>Boost: {draftData.manager.boost}</p>
+                      <p className="text-[10px]" style={{ color: 'var(--color-text-dim)', maxWidth: '400px' }}>{draftData.manager.desc}</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => handleSelectDraftManager(draftData.manager)}
+                    className="btn-sports"
+                    style={{ padding: '8px 16px', background: 'var(--color-gold)', color: '#000', border: 'none', width: 'auto', fontSize: '0.75rem' }}
+                  >
+                    Draft Manager
+                  </button>
+                </div>
+              )}
+
+              {/* Roster Choices (FUT card grid with search) */}
+              <div className="draft-pane">
+                <div className="draft-head">
+                  <div className="draft-title">
+                    <span className="draft-title-name">{draftData.teamName}</span>
+                    <span className="draft-year">{draftData.choices[0]?.year || "Historical"}</span>
+                  </div>
+                  <div className="draft-search-wrapper">
+                    <input 
+                      className="draft-search" 
+                      type="text"
+                      placeholder="Search player..." 
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                  </div>
+                </div>
+                
+                <div className="draft-subhead" style={{ justifyContent: 'center' }}>
+                  <span className="draft-instruct">
+                    {selectedCard ? (
+                      <span>👉 <b>STEP 2:</b> Click a flashing node on the pitch map to assign <b>{selectedCard.name}</b>.</span>
+                    ) : (
+                      <span>👉 <b>STEP 1:</b> Click a player card below to select them.</span>
+                    )}
+                  </span>
+                </div>
+                
+                <div className="player-list-grid">
+                  {draftData.choices
+                    .filter(choice => choice.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .map((choice) => {
+                      const isSelected = selectedCard?.id === choice.id;
+                      const isEligible = isPlayerEligibleForDraft(choice);
+                      
+                      let cardTier = "gold";
+                      if (choice.rating < 72) cardTier = "bronze";
+                      else if (choice.rating < 82) cardTier = "silver";
+                      
+                      return (
+                        <div 
+                          key={choice.id}
+                          onClick={() => isEligible && handleSelectDraftPlayer(choice)}
+                          className={`fut-card ${cardTier} ${isSelected ? 'selected' : ''} ${!isEligible ? 'ineligible' : ''}`}
+                        >
+                          <div className="fut-card-header">
+                            <span className="fut-card-rating">{choice.rating}</span>
+                            <span className="fut-card-pos">{choice.position}</span>
+                          </div>
+                          
+                          <div className="fut-card-badge">
+                            {renderJerseySVG(room.spunTeams[room.draftRound - 1], getInitials(choice.name), 42)}
+                          </div>
+                          
+                          <span className="fut-card-name" title={choice.name}>{choice.name.split(' ').pop()}</span>
+                          
+                          <div className="fut-card-stats">
+                            <div className="fut-card-stat"><span>PAC</span>{choice.stats.pace}</div>
+                            <div className="fut-card-stat"><span>SHO</span>{choice.stats.shooting}</div>
+                            <div className="fut-card-stat"><span>PAS</span>{choice.stats.passing}</div>
+                            <div className="fut-card-stat"><span>DRI</span>{choice.stats.dribbling}</div>
+                            <div className="fut-card-stat"><span>DEF</span>{choice.stats.defending}</div>
+                            <div className="fut-card-stat"><span>PHY</span>{choice.stats.physical}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  {draftData.choices.filter(choice => choice.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
+                    <div style={{ gridColumn: '1 / -1', padding: '24px', textAlign: 'center', color: 'var(--color-text-dim)', fontSize: '0.85rem' }}>
+                      No players match search filter.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {localPlayer?.ready && (
+            <div className="alert-box">
+              WAITING FOR OTHER MANAGER...
+            </div>
+          )}
+        </div>
+
+        {/* Pitch Map (Used to drop drafted players) */}
+        <div className="dashboard-panel">
+          <div className="text-center mb-4">
+            <h3 className="text-sm uppercase font-bold" style={{ color: 'var(--color-text-dim)' }}>Tactical Pitch</h3>
+          </div>
+          
+          <div className="pitch-container">
+            <div className="pitch-overlay"></div>
+            <div className="pitch-center-line"></div>
+            <div className="pitch-center-circle"></div>
+            <div className="pitch-penalty-box-top"></div>
+            <div className="pitch-penalty-box-bottom"></div>
+            
+            {localPlayer && getPlayerPositions(localPlayer.formation).map((pos, idx) => {
+              const draftedPlayer = localPlayer.squad[idx];
+              const slotLabel = getPositionLabel(localPlayer.formation, idx);
+
+              // 38-0-0.com style flashing compatible slot finder
+              const isCompatible = selectedCard && 
+                                   !draftedPlayer && 
+                                   isPositionCompatible(selectedCard.position, slotLabel);
+
+              return (
+                <div 
+                  key={idx} 
+                  onClick={() => handleSlotClick(idx)}
+                  className={`pitch-node ${draftedPlayer ? 'filled' : ''} ${isCompatible ? 'active-draft' : ''}`}
+                  style={{ 
+                    top: pos.top, 
+                    left: pos.left,
+                    cursor: isCompatible ? 'pointer' : draftedPlayer ? 'default' : 'not-allowed',
+                    opacity: selectedCard && !isCompatible && !draftedPlayer ? 0.35 : 1,
+                    background: draftedPlayer ? 'transparent' : undefined,
+                    border: draftedPlayer ? 'none' : undefined,
+                    boxShadow: draftedPlayer ? 'none' : undefined,
+                    overflow: draftedPlayer ? 'visible' : 'hidden'
+                  }}
+                >
+                  {draftedPlayer ? (
+                    <div style={{ position: 'relative', width: '64px', height: '64px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      {renderJerseySVG(draftedPlayer.teamId || room.spunTeams[room.draftRound - 1], getInitials(draftedPlayer.name), 46)}
+                      <div className="slot-ov">
+                        {draftedPlayer.rating}
+                      </div>
+                      <span className="slot-name">
+                        {draftedPlayer.name.split(' ').pop()}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="pitch-node-label">{slotLabel}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Subs Bench Slots (Flashes when a card is selected) */}
+          {localPlayer && (
+            <div className="mt-4 pt-4 border-t">
+              <p className="text-xs uppercase font-bold mb-2 text-center" style={{ color: 'var(--color-text-dim)' }}>Substitute Bench</p>
+              <div className="flex gap-4 justify-center">
+                {Array.from({ length: 3 }).map((_, subIdx) => {
+                  const player = localPlayer.subs[subIdx];
+                  const isCompatibleSub = selectedCard && !player;
+                  return (
+                    <div 
+                      key={subIdx}
+                      onClick={() => handleSubClick(subIdx)}
+                      className={`p-2 rounded-lg text-center ${player ? 'filled' : ''} ${isCompatibleSub ? 'active-draft-sub active-draft' : ''}`}
+                      style={{ 
+                        width: '90px', 
+                        background: '#000', 
+                        border: isCompatibleSub ? '2px solid #fff' : player ? '1px solid var(--color-gold)' : '1px dotted rgba(46,204,113,0.3)',
+                        fontSize: '0.65rem',
+                        cursor: isCompatibleSub ? 'pointer' : 'default',
+                        opacity: selectedCard && !isCompatibleSub && !player ? 0.35 : 1,
+                        position: 'relative',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        minHeight: '80px'
+                      }}
+                    >
+                      {player ? (
+                        <>
+                          {renderJerseySVG(player.teamId || room.spunTeams[room.draftRound - 1], getInitials(player.name), 36)}
+                          <div className="slot-ov" style={{
+                            position: 'absolute',
+                            top: '4px',
+                            right: '4px',
+                            width: '18px',
+                            height: '18px',
+                            borderRadius: '50%',
+                            background: 'var(--color-gold)',
+                            color: '#1a1a1a',
+                            fontWeight: '900',
+                            fontSize: '9px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            border: '1.5px solid #000',
+                            zIndex: 2
+                          }}>
+                            {player.rating}
+                          </div>
+                          <div className="font-bold mt-1" style={{ color: 'var(--color-gold)', fontSize: '0.6rem' }}>
+                            {player.name.split(' ').pop()}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div>SUB {subIdx + 1}</div>
+                          <div className="mt-1" style={{ color: 'var(--color-text-dim)' }}>EMPTY</div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Render Tournament Dashboard & Statistics
+  if (room.status === 'tournament' || room.status === 'finished') {
+    const user = room.players[0];
+    const opponent = room.currentOpponent || room.players[1] || { name: "AI Opponent", stats: { totalOvr: 60, att: 60, mid: 60, def: 60 } };
+    
+    const hasFinished = room.status === 'finished';
+    const wonCup = hasFinished && room.matchesPlayed >= 8 && (room.matchesHistory[7]?.scoreA > room.matchesHistory[7]?.scoreB);
+
+    const sortedScorers = Object.entries(room.playerStats || {}).map(([name, s]) => ({ name, ...s })).sort((a,b) => b.goals - a.goals);
+    const sortedAssisters = Object.entries(room.playerStats || {}).map(([name, s]) => ({ name, ...s })).sort((a,b) => b.assists - a.assists);
+    const sortedGKs = Object.entries(room.playerStats || {}).map(([name, s]) => ({ name, ...s })).sort((a,b) => b.cleanSheets - a.cleanSheets);
+
+    const groups = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
+
+    return (
+      <div className="max-w-6xl p-6 space-y-8">
+        
+        {/* Header Campaign Banner */}
+        <div className="dashboard-panel flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '16px' }}>
+          <div>
+            <p className="text-xs uppercase" style={{ color: 'var(--color-text-dim)' }}>FIFA World Cup Campaign 2026</p>
+            <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>
+              {hasFinished 
+                ? (wonCup ? "🏆 WORLD CHAMPION!" : "💀 GAME OVER") 
+                : `STAGE RUN: MATCH ${room.matchesPlayed + 1} OF 8`
+              }
+            </h2>
+            <p className="text-xs font-bold" style={{ color: 'var(--color-gold)', marginTop: '4px' }}>
+              {hasFinished ? (wonCup ? "YOU HAVE CONQUERED THE WORLD CUP!" : "KNOCKED OUT OF TOURNAMENT") : (
+                room.matchesPlayed < 3 
+                  ? `GROUP STAGE MATCH - GROUP A`
+                  : room.matchesPlayed === 3 ? "ROUND OF 32 (GAME 4)"
+                  : room.matchesPlayed === 4 ? "ROUND OF 16 (GAME 5)"
+                  : room.matchesPlayed === 5 ? "QUARTERFINAL (GAME 6)"
+                  : room.matchesPlayed === 6 ? "SEMIFINAL (GAME 7)" : "THE WORLD CUP FINAL (GAME 8)"
+              )}
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            {room.matchesHistory.map((h, idx) => {
+              const won = h.scoreA > h.scoreB;
+              const draw = h.scoreA === h.scoreB;
+              return (
+                <div 
+                  key={idx} 
+                  className={`result-bubble ${won ? 'badge-win' : draw ? 'badge-draw' : 'badge-loss'}`}
+                >
+                  {won ? 'W' : draw ? 'D' : 'L'}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Dashboard Tabs Toggle */}
+        <div className="tab-row">
+          <button onClick={() => setActiveDashboardTab("SCOUTING")} className={`tab-btn ${activeDashboardTab === "SCOUTING" ? 'active' : ''}`}>Squad Scouting</button>
+          {room.isSinglePlayer && <button onClick={() => setActiveDashboardTab("STANDINGS")} className={`tab-btn ${activeDashboardTab === "STANDINGS" ? 'active' : ''}`}>All Groups Standings</button>}
+          <button onClick={() => setActiveDashboardTab("STATS")} className={`tab-btn ${activeDashboardTab === "STATS" ? 'active' : ''}`}>Leaderboards</button>
+        </div>
+
+        {/* --- TAB 1: SQUAD SCOUTING & CONTROLS --- */}
+        {activeDashboardTab === "SCOUTING" && (
+          <div className="tournament-grid">
+            
+            {/* Tactic adjust card */}
+            <div className="dashboard-panel space-y-6">
+              <h3 className="text-sm uppercase font-bold border-b pb-2">Manager Board</h3>
+
+              {user.manager && (
+                <div className="p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--color-gold)', fontSize: '0.78rem' }}>
+                  <div className="font-bold text-white">Manager: {user.manager.name} ({user.manager.country})</div>
+                  <div style={{ color: 'var(--color-gold)' }}>Boost: {user.manager.boost}</div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs mb-2 uppercase font-semibold">Tactic Style</label>
+                <select 
+                  value={user.tactic} 
+                  onChange={e => handleUpdateTactic(e.target.value)}
+                  className="sports-input"
+                  disabled={simulationActive}
+                >
+                  {Object.keys(TACTIC_DETAILS).map(tacKey => (
+                    <option key={tacKey} value={tacKey}>{TACTIC_DETAILS[tacKey].name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(46, 204, 113, 0.15)', fontSize: '0.75rem' }}>
+                <h4 className="font-bold mb-1" style={{ color: TACTIC_DETAILS[user.tactic]?.color }}>
+                  {TACTIC_DETAILS[user.tactic]?.name}
+                </h4>
+                <p style={{ color: 'var(--color-text-dim)' }}>{TACTIC_DETAILS[user.tactic]?.desc}</p>
+              </div>
+
+              {!hasFinished && (
+                <div className="pt-4 border-t">
+                  {!user.ready ? (
+                    <button onClick={handleReadyMatch} className="btn-sports w-full">Kick Off Match</button>
+                  ) : (
+                    <div className="alert-box text-sm">AWAITING OPPONENT READY...</div>
+                  )}
+                </div>
+              )}
+
+              {hasFinished && (
+                <button onClick={handleRestart} className="btn-sports w-full">
+                  <RotateCcw size={16} /> Start New Tournament
+                </button>
+              )}
+            </div>
+
+            {/* Pitch & substitutes view */}
+            <div className="dashboard-panel flex flex-col gap-4">
+              <h3 className="text-sm uppercase font-bold border-b pb-2 text-center">Active Starting XI</h3>
+              
+              {starterSwapIndex !== null && (
+                <div className="alert-box alert-box-amber text-xs">
+                  SWAP MODE: Select a sub on the bench below to swap with your selected starter.
+                </div>
+              )}
+
+              <div className="pitch-container" style={{ maxHeight: '420px' }}>
+                <div className="pitch-overlay"></div>
+                <div className="pitch-center-line"></div>
+                <div className="pitch-center-circle"></div>
+                <div className="pitch-penalty-box-top"></div>
+                <div className="pitch-penalty-box-bottom"></div>
+                
+                {getPlayerPositions(user.formation).map((pos, idx) => {
+                  const player = user.squad[idx];
+                  const isSelectedForSwap = starterSwapIndex === idx;
+
+                  return (
+                    <div 
+                      key={idx} 
+                      onClick={() => handleSlotClick(idx)}
+                      className={`pitch-node ${player ? 'filled' : ''} ${isSelectedForSwap ? 'active-draft' : ''}`}
+                      style={{ 
+                        top: pos.top, 
+                        left: pos.left,
+                        background: player ? 'transparent' : undefined,
+                        border: player ? 'none' : undefined,
+                        boxShadow: player ? 'none' : undefined,
+                        overflow: player ? 'visible' : 'hidden'
+                      }}
+                    >
+                      {player ? (
+                        <div style={{ position: 'relative', width: '64px', height: '64px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                          {renderJerseySVG(player.teamId, getInitials(player.name), 46)}
+                          <div className="slot-ov">
+                            {player.rating}
+                          </div>
+                          <span className="slot-name">
+                            {player.name.split(' ').pop()}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="pitch-node-label">{getPositionLabel(user.formation, idx)}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="pt-4 border-t">
+                <p className="text-xs uppercase font-bold mb-2 text-center" style={{ color: 'var(--color-text-dim)' }}>Substitute Bench (Click starter, then click bench to swap)</p>
+                <div className="flex gap-4 justify-center">
+                  {Array.from({ length: 3 }).map((_, subIdx) => {
+                    const player = user.subs[subIdx];
+                    return (
+                      <div 
+                        key={subIdx}
+                        onClick={() => handleSubClick(subIdx)}
+                        className={`p-2 rounded-lg text-center ${player ? 'filled' : ''}`}
+                        style={{ 
+                          width: '95px', 
+                          background: '#000', 
+                          border: '1px solid var(--color-gold)',
+                          fontSize: '0.68rem',
+                          cursor: 'pointer',
+                          position: 'relative',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          minHeight: '80px'
+                        }}
+                      >
+                        {player ? (
+                          <>
+                            {renderJerseySVG(player.teamId, getInitials(player.name), 36)}
+                            <div className="slot-ov" style={{
+                              position: 'absolute',
+                              top: '4px',
+                              right: '4px',
+                              width: '18px',
+                              height: '18px',
+                              borderRadius: '50%',
+                              background: 'var(--color-gold)',
+                              color: '#1a1a1a',
+                              fontWeight: '900',
+                              fontSize: '9px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              border: '1.5px solid #000',
+                              zIndex: 2
+                            }}>
+                              {player.rating}
+                            </div>
+                            <div className="font-bold mt-1" style={{ color: 'var(--color-gold)', fontSize: '0.6rem' }}>
+                              {player.name.split(' ').pop()}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div>SUB {subIdx + 1}</div>
+                            <div className="mt-1" style={{ color: 'var(--color-text-dim)' }}>EMPTY</div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* --- TAB 2: STANDINGS (ALL 12 GROUPS) --- */}
+        {activeDashboardTab === "STANDINGS" && room.isSinglePlayer && (
+          <div className="dashboard-panel space-y-6">
+            <div className="flex justify-between items-center border-b pb-4" style={{ flexWrap: 'wrap', gap: '12px' }}>
+              <h3 className="text-sm uppercase font-bold">Groups Standings Directory</h3>
+              <div className="flex items-center gap-2">
+                <span className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Select Group:</span>
+                <select 
+                  value={selectedStandingsGroup} 
+                  onChange={e => setSelectedStandingsGroup(e.target.value)}
+                  className="sports-input"
+                  style={{ width: '120px', padding: '8px 12px' }}
+                >
+                  {groups.map(gLetter => (
+                    <option key={gLetter} value={gLetter}>Group {gLetter}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {room.allGroupsStandings[selectedStandingsGroup] ? (
+              <table className="retro-table">
+                <thead>
+                  <tr>
+                    <th>TEAM</th>
+                    <th>P</th>
+                    <th>W</th>
+                    <th>D</th>
+                    <th>L</th>
+                    <th>GF</th>
+                    <th>GA</th>
+                    <th>GD</th>
+                    <th>PTS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {room.allGroupsStandings[selectedStandingsGroup].map((team, idx) => (
+                    <tr key={idx} className={team.isUser ? 'active-row' : ''}>
+                      <td>{idx + 1}. {team.name} {team.isUser ? "[YOU]" : ""}</td>
+                      <td>{team.played}</td>
+                      <td>{team.won}</td>
+                      <td>{team.drawn}</td>
+                      <td>{team.lost}</td>
+                      <td>{team.gf}</td>
+                      <td>{team.ga}</td>
+                      <td>{team.gd}</td>
+                      <td>{team.points}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-center text-slate-500">Group standing details unavailable.</p>
+            )}
+          </div>
+        )}
+
+        {/* --- TAB 3: STATS LEADERBOARD --- */}
+        {activeDashboardTab === "STATS" && (
+          <div className="grid-2" style={{ gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+            
+            <div className="dashboard-panel space-y-6">
+              <h3 className="text-sm uppercase font-bold border-b pb-2 text-center" style={{ color: 'var(--color-gold)' }}>🎖️ Attacking Leaderboard</h3>
+              
+              <div className="space-y-4">
+                <h4 className="text-xs uppercase font-bold text-center">Golden Boot (Most Goals)</h4>
+                {sortedScorers.length > 0 ? (
+                  <table className="retro-table">
+                    <thead>
+                      <tr>
+                        <th>RANK</th>
+                        <th>PLAYER</th>
+                        <th>GOALS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedScorers.slice(0, 5).map((p, idx) => (
+                        <tr key={idx}>
+                          <td>{idx + 1}</td>
+                          <td style={{ textAlign: 'left', fontWeight: 'bold' }}>{p.name}</td>
+                          <td style={{ color: 'var(--color-gold)', fontWeight: 'bold' }}>{p.goals}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="text-center text-xs text-slate-500 py-4">No goals recorded yet.</p>
+                )}
+              </div>
+
+              <div className="space-y-4 pt-4 border-t">
+                <h4 className="text-xs uppercase font-bold text-center">Top Playmakers (Assists)</h4>
+                {sortedAssisters.length > 0 ? (
+                  <table className="retro-table">
+                    <thead>
+                      <tr>
+                        <th>RANK</th>
+                        <th>PLAYER</th>
+                        <th>ASSISTS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedAssisters.slice(0, 5).map((p, idx) => (
+                        <tr key={idx}>
+                          <td>{idx + 1}</td>
+                          <td style={{ textAlign: 'left', fontWeight: 'bold' }}>{p.name}</td>
+                          <td style={{ color: 'var(--color-green)', fontWeight: 'bold' }}>{p.assists}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="text-center text-xs text-slate-500 py-4">No assists recorded yet.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="dashboard-panel space-y-6">
+              <h3 className="text-sm uppercase font-bold border-b pb-2 text-center" style={{ color: 'var(--color-gold)' }}>🛡️ Defensive Leaderboard</h3>
+              
+              <div className="space-y-4">
+                <h4 className="text-xs uppercase font-bold text-center">Golden Glove (Clean Sheets)</h4>
+                {sortedGKs.length > 0 ? (
+                  <table className="retro-table">
+                    <thead>
+                      <tr>
+                        <th>RANK</th>
+                        <th>GOALKEEPER</th>
+                        <th>CLEAN SHEETS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedGKs.slice(0, 5).map((p, idx) => (
+                        <tr key={idx}>
+                          <td>{idx + 1}</td>
+                          <td style={{ textAlign: 'left', fontWeight: 'bold' }}>{p.name}</td>
+                          <td style={{ color: 'var(--color-gold)', fontWeight: 'bold' }}>{p.cleanSheets}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="text-center text-xs text-slate-500 py-4">No clean sheets recorded yet.</p>
+                )}
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* Scouting report detail overlay */}
+        {!hasFinished && activeDashboardTab === "SCOUTING" && (
+          <div className="dashboard-panel opp-card-panel space-y-4">
+            <h3 className="text-sm uppercase font-bold border-b pb-2 flex items-center gap-2" style={{ color: '#e74c3c' }}>
+              <Shield size={16} /> Scouting Report: Opponent Details
+            </h3>
+
+            <div className="grid-2" style={{ gridTemplateColumns: '1fr 2fr', gap: '24px' }}>
+              <div className="space-y-4">
+                <div style={{ background: '#000', padding: '16px', borderRadius: '8px', border: '1px solid rgba(231, 76, 60, 0.3)' }}>
+                  <p className="font-bold text-lg text-white">{opponent.name}</p>
+                  {opponent.manager && <p className="text-xs mt-1" style={{ color: 'var(--color-text-dim)' }}>Manager: {opponent.manager.name}</p>}
+                  <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Tactic: {opponent.tactic?.toUpperCase()}</p>
+                </div>
+                <div className="p-3" style={{ background: '#000', borderRadius: '8px', border: '1px solid rgba(231, 76, 60, 0.3)' }}>
+                  <div className="font-bold text-center text-md mb-2">POWER RATINGS</div>
+                  <div className="grid-2 text-xs">
+                    <div>OVR: <span className="font-bold text-white">{opponent.stats?.totalOvr}</span></div>
+                    <div>ATT: <span className="font-bold text-white">{opponent.stats?.att}</span></div>
+                    <div>MID: <span className="font-bold text-white">{opponent.stats?.mid}</span></div>
+                    <div>DEF: <span className="font-bold text-white">{opponent.stats?.def}</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs uppercase font-bold mb-2">Active Opponent Squad Roster</p>
+                <div className="flex gap-2" style={{ flexWrap: 'wrap', justifyContent: 'center' }}>
+                  {opponent.squad && Object.values(opponent.squad).filter(Boolean).map((p, idx) => {
+                    let cardTier = "gold";
+                    if (p.rating < 72) cardTier = "bronze";
+                    else if (p.rating < 82) cardTier = "silver";
+                    
+                    return (
+                      <div 
+                        key={idx} 
+                        className={`fut-card ${cardTier}`}
+                        style={{ 
+                          width: '90px', 
+                          height: '135px', 
+                          padding: '6px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          boxShadow: '0 4px 8px rgba(0,0,0,0.4)',
+                          color: '#0c210d',
+                          cursor: 'default',
+                          transform: 'none'
+                        }}
+                      >
+                        <div className="flex justify-between w-full" style={{ fontSize: '0.65rem', fontWeight: 900, lineHeight: 1 }}>
+                          <span>{p.rating}</span>
+                          <span>{p.position}</span>
+                        </div>
+                        <div style={{ margin: '2px 0' }}>
+                          {renderJerseySVG(p.teamId || opponent.manager?.country, getInitials(p.name), 30)}
+                        </div>
+                        <span className="font-bold text-center" style={{ width: '100%', fontSize: '0.62rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderBottom: '1px solid rgba(0,0,0,0.1)', paddingBottom: '2px' }}>
+                          {p.name.split(' ').pop()}
+                        </span>
+                        <span style={{ fontSize: '0.48rem', opacity: 0.7, textTransform: 'uppercase', fontWeight: 800 }}>
+                          OVR: {p.rating}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Live Match Simulation Overlay */}
+        {simulationActive && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+            background: 'rgba(5, 12, 7, 0.96)', zIndex: 10000, display: 'flex',
+            alignItems: 'center', justifyContent: 'center', padding: '24px',
+            overflowY: 'auto'
+          }}>
+            <div className="dashboard-panel max-w-6xl p-6 space-y-6" style={{ margin: 'auto', border: '2px solid var(--color-green)' }}>
+              <h3 className="logo-heading text-center" style={{ fontSize: '1.4rem' }}>WORLD CUP SIMULATION</h3>
+
+              <div className="grid-2 text-center" style={{ gridTemplateColumns: '1.2fr auto 1.2fr', background: '#000', padding: '20px', borderRadius: '8px', border: '1px solid var(--color-green)', alignItems: 'center' }}>
+                <div>
+                  <p className="font-bold text-lg text-white">{simDetails?.teamAName}</p>
+                  <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>
+                    OVR: {simDetails?.teamAStats?.totalOvr || 75} | {simDetails?.teamAStats?.tactic?.toUpperCase() || 'BALANCED'}
+                  </p>
+                </div>
+                <div style={{ padding: '0 30px' }}>
+                  <div className="text-3xl font-extrabold" style={{ color: 'var(--color-gold)' }}>
+                    {getRunningScore()[0]} - {getRunningScore()[1]}
+                  </div>
+                  {!simFinished ? (
+                    <span className="text-xs font-bold uppercase animate-pulse" style={{ color: 'var(--color-green)', display: 'inline-block', marginTop: '6px' }}>LIVE MATCHPLAY</span>
+                  ) : (
+                    <span className="text-xs font-bold uppercase" style={{ color: 'var(--color-gold)', display: 'inline-block', marginTop: '6px' }}>FULL TIME</span>
+                  )}
+                </div>
+                <div>
+                  <p className="font-bold text-lg text-white">{simDetails?.teamBName}</p>
+                  <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>
+                    OVR: {simDetails?.teamBStats?.totalOvr || 75} | {simDetails?.teamBStats?.tactic?.toUpperCase() || 'BALANCED'}
+                  </p>
+                </div>
+              </div>
+
+              {/* 3D Field Visualizer */}
+              <div className="sim-field-container">
+                <div className="sim-field-pitch">
+                  <div className="sim-field-center-line"></div>
+                  <div className="sim-field-center-circle"></div>
+                  <div className="sim-field-penalty-left"></div>
+                  <div className="sim-field-penalty-right"></div>
+                  
+                  {/* Ball element animated via top/left inline styles */}
+                  <div 
+                    className="sim-field-ball"
+                    style={{ left: ballPos.x, top: ballPos.y }}
+                  ></div>
+
+                  {/* Broadcast Alert Text overlay */}
+                  {alertMessage && (
+                    <div className="sim-field-alert-overlay">
+                      <div className="sim-field-alert-text">{alertMessage}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Interactive Penalty Shootout spot selection */}
+              {shootoutState && shootoutEvent && (
+                <div className="shootout-overlay">
+                  <div className="text-center mb-3">
+                    <h4 className="text-sm font-bold uppercase text-white" style={{ color: 'var(--color-gold)' }}>
+                      {shootoutState === 'shoot' ? '🎯 TAKE THE PENALTY' : '🧤 DIVING SAVE'}
+                    </h4>
+                    <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>
+                      {shootoutState === 'shoot' 
+                        ? 'Select a target area to strike the penalty kick:' 
+                        : 'Anticipate the striker and select a corner to dive:'}
+                    </p>
+                  </div>
+                  <div className="penalty-goal-grid">
+                    <button onClick={() => handleShootoutChoice(1)} className="penalty-spot-btn">Top Left</button>
+                    <button onClick={() => handleShootoutChoice(2)} className="penalty-spot-btn">Top Center</button>
+                    <button onClick={() => handleShootoutChoice(3)} className="penalty-spot-btn">Top Right</button>
+                    <button onClick={() => handleShootoutChoice(4)} className="penalty-spot-btn">Mid Left</button>
+                    <button onClick={() => handleShootoutChoice(5)} className="penalty-spot-btn">Center</button>
+                    <button onClick={() => handleShootoutChoice(6)} className="penalty-spot-btn">Mid Right</button>
+                    <button onClick={() => handleShootoutChoice(7)} className="penalty-spot-btn">Bottom L</button>
+                    <button onClick={() => handleShootoutChoice(8)} className="penalty-spot-btn">Bottom C</button>
+                    <button onClick={() => handleShootoutChoice(9)} className="penalty-spot-btn">Bottom R</button>
+                  </div>
+                </div>
+              )}
+
+              <div className="ticker-console">
+                {visibleEvents.map((ev, idx) => {
+                  let eventClass = "";
+                  if (ev.type === 'goal') eventClass = "goal";
+                  if (ev.type === 'yellow_card') eventClass = "yellow";
+                  if (ev.type === 'red_card') eventClass = "red";
+                  
+                  return (
+                    <div key={idx} className={`ticker-event ${eventClass}`}>
+                      <div className="ticker-time">{ev.time}'</div>
+                      <div className="ticker-text">{ev.text}</div>
+                    </div>
+                  );
+                })}
+                <div ref={eventListEndRef} />
+              </div>
+
+              {simFinished && (
+                <div className="flex justify-center">
+                  <button 
+                    onClick={handleContinue}
+                    className="btn-sports"
+                    style={{ maxWidth: '200px' }}
+                  >
+                    CONTINUE
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return null;
+}
