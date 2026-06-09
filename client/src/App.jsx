@@ -879,6 +879,7 @@ export default function App() {
     });
 
     s.on('global_matched', ({ roomId, isHost }) => {
+      setRoomId(roomId);
       s.emit('join_room', { roomId, playerName: playerNameRef.current, isHost, isSinglePlayer: false });
       setLandingSubmenu("MAIN");
     });
