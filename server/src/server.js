@@ -821,6 +821,36 @@ function simulateRound(room) {
           room.currentOpponent = generateAISquad(randomOpp.id);
         }
       }
+
+      const matchDetails = {
+        matchNum: room.matchesPlayed,
+        teamAName: `${user.name} (${user.teamName || 'Brazil'})`,
+        teamBName: opponent.name,
+        teamAStats: {
+          totalOvr: user.stats?.totalOvr || 75,
+          tactic: user.tactic,
+          formation: user.formation
+        },
+        teamBStats: {
+          totalOvr: opponent.stats?.totalOvr || 75,
+          tactic: opponent.tactic,
+          formation: opponent.formation
+        },
+        scoreA: matchRes.scoreA,
+        scoreB: matchRes.scoreB,
+        events: matchRes.events,
+        opponentSquad: opponent.squad,
+        opponentManager: opponent.manager,
+        opponentStats: opponent.stats
+      };
+
+      room.matchesHistory.push(matchDetails);
+      room.players.forEach(p => { p.ready = false; });
+
+      io.to(room.roomId).emit('match_simulated', {
+        matchDetails,
+        roomState: getSanitizedRoom(room)
+      });
     } else {
       // Knockout Phase (Matches 4 to 8)
       // Simulate user's match with knockout penalties enabled
