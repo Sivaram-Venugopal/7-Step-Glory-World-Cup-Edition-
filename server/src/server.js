@@ -81,6 +81,35 @@ function getBalancedDraftPool() {
   return pool.sort(() => 0.5 - Math.random());
 }
 
+function getBalancedDraftPoolsForMultiplayer() {
+  const tiers = [];
+  for (let i = 0; i < 4; i++) tiers.push('big');
+  for (let i = 0; i < 6; i++) tiers.push('medium');
+  for (let i = 0; i < 5; i++) tiers.push('small');
+  
+  tiers.sort(() => 0.5 - Math.random());
+  
+  const p1Pool = [];
+  const p2Pool = [];
+  
+  tiers.forEach(tierName => {
+    const list = TEAM_TIERS[tierName];
+    const idx1 = Math.floor(Math.random() * list.length);
+    let idx2 = Math.floor(Math.random() * list.length);
+    
+    if (list.length > 1) {
+      while (idx2 === idx1) {
+        idx2 = Math.floor(Math.random() * list.length);
+      }
+    }
+    
+    p1Pool.push(list[idx1]);
+    p2Pool.push(list[idx2]);
+  });
+  
+  return { p1Pool, p2Pool };
+}
+
 const ALL_HISTORICAL_NATIONS = [
   "Algeria", "Angola", "Argentina", "Australia", "Austria", "Belgium", "Bolivia", "Bosnia and Herzegovina", "Brazil", "Bulgaria",
   "Cameroon", "Canada", "Chile", "China", "Colombia", "Costa Rica", "Croatia", "Cuba", "Czech Republic", "Denmark",
@@ -171,8 +200,16 @@ io.on('connection', (socket) => {
     room.status = 'drafting';
     room.draftRound = 1; // Start at Round 1
 
-    // Pre-spin teams for 15 rounds of drafts with exactly balanced tiers (4 Big, 6 Medium, 5 Small)
-    room.spunTeams = getBalancedDraftPool();
+    if (room.isSinglePlayer || room.players.length === 1) {
+      const pool = getBalancedDraftPool();
+      room.spunTeams = pool;
+      room.players[0].spunTeams = pool;
+    } else {
+      const { p1Pool, p2Pool } = getBalancedDraftPoolsForMultiplayer();
+      room.spunTeams = p1Pool; // fallback
+      room.players[0].spunTeams = p1Pool;
+      room.players[1].spunTeams = p2Pool;
+    }
 
     sendDraftRoundOptions(room);
   });
@@ -453,10 +490,11 @@ io.on('connection', (socket) => {
 // Helper: send options for manager/player drafting rounds
 function sendDraftRoundOptions(room) {
   const round = room.draftRound;
-  const teamId = room.spunTeams[round - 1];
-  const team = historicalTeams.find(t => t.id === teamId) || historicalTeams[0];
   
   room.players.forEach(p => {
+    const teamId = p.spunTeams ? p.spunTeams[round - 1] : room.spunTeams[round - 1];
+    const team = historicalTeams.find(t => t.id === teamId) || historicalTeams[0];
+    
     // Filter out duplicate drafted players by name
     const filteredRoster = team.roster.filter(player => !p.draftedNames.includes(player.name));
     
@@ -881,7 +919,8 @@ function getSanitizedRoom(room) {
       tactic: p.tactic,
       stats: p.stats,
       ready: p.ready,
-      draftedNames: p.draftedNames
+      draftedNames: p.draftedNames,
+      spunTeams: p.spunTeams
     }))
   };
 }

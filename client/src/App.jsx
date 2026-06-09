@@ -46,9 +46,11 @@ const WorldCupTrophy = ({ size = 24, className = "", style = {}, ...props }) => 
   );
 };
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || (window.location.hostname === 'localhost' 
-  ? 'http://localhost:5000' 
-  : `http://${window.location.hostname}:5000`);
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || (
+  window.location.hostname === 'localhost' 
+    ? 'http://localhost:5000' 
+    : `http://${window.location.hostname}:5000`
+);
 
 const TACTIC_DETAILS = {
   "tiki-taka": { name: "Tiki-Taka", desc: "Focuses on short passing, ball control, and positional play.", color: "#ffffff" },
@@ -1222,7 +1224,7 @@ export default function App() {
           socket.emit('pick_draft_item', { 
             roomId, 
             type: 'player', 
-            item: { ...selectedCard, teamId: room.spunTeams[room.draftRound - 1] }, 
+            item: { ...selectedCard, teamId: (localPlayer?.spunTeams || room.spunTeams)[room.draftRound - 1] }, 
             slotType: 'squad', 
             slotIndex: idx 
           });
@@ -1247,7 +1249,7 @@ export default function App() {
         socket.emit('pick_draft_item', { 
           roomId, 
           type: 'player', 
-          item: { ...selectedCard, teamId: room.spunTeams[room.draftRound - 1] }, 
+          item: { ...selectedCard, teamId: (localPlayer?.spunTeams || room.spunTeams)[room.draftRound - 1] }, 
           slotType: 'sub', 
           slotIndex: subIdx 
         });
@@ -1920,6 +1922,7 @@ export default function App() {
 
   // Render Drafting Phase
   if (room.status === 'drafting') {
+    const localSpunTeams = localPlayer?.spunTeams || room.spunTeams || [];
     return (
       <>
         <div className="max-w-6xl p-6 draft-grid">
@@ -1933,7 +1936,7 @@ export default function App() {
                 <div>
                   <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Spun Nation</p>
                   <p className="font-extrabold text-white text-md">
-                    {room.spunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
+                    {localSpunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
                   </p>
                 </div>
                 <button 
@@ -1951,7 +1954,7 @@ export default function App() {
               <div className="matrix-spinner-reel">
                 {isSpinning 
                   ? "SCOUTING..." 
-                  : room.spunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
+                  : localSpunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
               </div>
               <button 
                 onClick={handleSpinWheel}
@@ -2052,7 +2055,7 @@ export default function App() {
                           </div>
                           
                           <div className="fut-card-badge">
-                            {renderJerseySVG(room.spunTeams[room.draftRound - 1], getInitials(choice.name), 42)}
+                            {renderJerseySVG(localSpunTeams[room.draftRound - 1], getInitials(choice.name), 42)}
                           </div>
                           
                           <span className="fut-card-name" title={choice.name}>{choice.name.split(' ').pop()}</span>
@@ -2125,7 +2128,7 @@ export default function App() {
                 >
                   {draftedPlayer ? (
                     <div style={{ position: 'relative', width: '64px', height: '64px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      {renderJerseySVG(draftedPlayer.teamId || room.spunTeams[room.draftRound - 1], getInitials(draftedPlayer.name), 46)}
+                      {renderJerseySVG(draftedPlayer.teamId || localSpunTeams[room.draftRound - 1], getInitials(draftedPlayer.name), 46)}
                       <div className="slot-ov">
                         {draftedPlayer.rating}
                       </div>
@@ -2171,7 +2174,7 @@ export default function App() {
                     >
                       {player ? (
                         <>
-                          {renderJerseySVG(player.teamId || room.spunTeams[room.draftRound - 1], getInitials(player.name), 36)}
+                          {renderJerseySVG(player.teamId || localSpunTeams[room.draftRound - 1], getInitials(player.name), 36)}
                           <div className="slot-ov" style={{
                             position: 'absolute',
                             top: '4px',
