@@ -1,6 +1,18 @@
 import { historicalTeams } from '../data/players.js';
 import { historicalPlayersByCountry } from '../data/historical_players_db.js';
 
+function getPositionLabel(formation, index) {
+  const layouts = {
+    "4-3-3": ["GK", "LB", "CB", "CB", "RB", "CM", "CDM", "CM", "LW", "ST", "RW"],
+    "4-4-2": ["GK", "LB", "CB", "CB", "RB", "LM", "CM", "CM", "RM", "ST", "ST"],
+    "3-5-2": ["GK", "CB", "CB", "CB", "LM", "CM", "CDM", "CM", "RM", "ST", "ST"],
+    "5-4-1": ["GK", "LWB", "CB", "CB", "CB", "RWB", "LM", "CM", "CM", "RM", "ST"],
+    "4-2-3-1": ["GK", "LB", "CB", "CB", "RB", "LDM", "RDM", "LM", "CAM", "RM", "ST"],
+    "3-4-3": ["GK", "CB", "CB", "CB", "LM", "CM", "CM", "RM", "LW", "ST", "RW"]
+  };
+  return layouts[formation]?.[index] || "SUB";
+}
+
 // Peter Drury-style dramatic commentaries
 const GOAL_TEMPLATES = [
   "Oh, it is written in the stars! {scorer} has painted the canvas of this stadium with sheer genius! Assisted by {assister} who read the play like a scholar!",
@@ -117,30 +129,42 @@ export function getPenaltyMissCommentary() {
 /**
  * Calculates team sector stats (ATT, MID, DEF, OVR, Chemistry) based on selected squad (starting XI), formation, tactic, and manager.
  */
-export function calculateTeamStats(squad, formation, tactic, managerObj) {
-  const playersList = Object.values(squad).filter(p => p && p.id);
-  
-  if (playersList.length === 0) {
-    return { att: 50, mid: 50, def: 50, chemistry: 20, totalOvr: 50 };
-  }
-
+export function calculateTeamStats(squad, formation, tactic, managerObj, playStyle = "balanced") {
   let attRatings = [];
   let midRatings = [];
   let defRatings = [];
   let gkRating = 50;
 
-  playersList.forEach(p => {
-    let rating = p.rating;
-    if (p.position === "FWD") {
-      attRatings.push(rating);
-    } else if (p.position === "MID") {
-      midRatings.push(rating);
-    } else if (p.position === "DEF") {
-      defRatings.push(rating);
-    } else if (p.position === "GK") {
-      gkRating = rating;
+  for (let idx = 0; idx <= 10; idx++) {
+    const p = squad[idx];
+    if (p && p.rating) {
+      const slotLabel = getPositionLabel(formation, idx);
+      
+      let sector = "";
+      if (slotLabel === "GK") sector = "GK";
+      else if (["LB", "CB", "RB", "LWB", "RWB"].includes(slotLabel)) sector = "DEF";
+      else if (["LM", "CM", "RM", "CDM", "CAM", "LDM", "RDM"].includes(slotLabel)) sector = "MID";
+      else if (["LW", "ST", "RW", "FWD"].includes(slotLabel)) sector = "FWD";
+      
+      let naturalPos = p.position; // "GK", "DEF", "MID", "FWD"
+      let rating = p.rating;
+      
+      // Enforce position compatibility penalty
+      if (naturalPos !== sector) {
+        rating = Math.max(40, rating - 15);
+      }
+
+      if (sector === "FWD") {
+        attRatings.push(rating);
+      } else if (sector === "MID") {
+        midRatings.push(rating);
+      } else if (sector === "DEF") {
+        defRatings.push(rating);
+      } else if (sector === "GK") {
+        gkRating = rating;
+      }
     }
-  });
+  }
 
   const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 65;
 
@@ -150,10 +174,13 @@ export function calculateTeamStats(squad, formation, tactic, managerObj) {
 
   // Chemistry
   const countryCounts = {};
-  playersList.forEach(p => {
-    const origin = p.country || "Unknown";
-    countryCounts[origin] = (countryCounts[origin] || 0) + 1;
-  });
+  for (let idx = 0; idx <= 10; idx++) {
+    const p = squad[idx];
+    if (p) {
+      const origin = p.country || "Unknown";
+      countryCounts[origin] = (countryCounts[origin] || 0) + 1;
+    }
+  }
 
   let chemScore = 20;
   Object.values(countryCounts).forEach(count => {
@@ -168,6 +195,17 @@ export function calculateTeamStats(squad, formation, tactic, managerObj) {
       mid += 2;
       def += 2;
     }
+  }
+
+  // Play style boosts
+  if (playStyle === "attack") {
+    att += 3;
+    def -= 2;
+  } else if (playStyle === "defense") {
+    def += 3;
+    att -= 2;
+  } else if (playStyle === "control") {
+    mid += 2;
   }
 
   // Balanced tactics
