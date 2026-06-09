@@ -428,7 +428,7 @@ export default function App() {
   // Bench Swap
   const [selectedSwapSlot, setSelectedSwapSlot] = useState(null); // { type: 'squad' | 'sub', index: number }
   const [showTimeoutPopup, setShowTimeoutPopup] = useState(false);
-  const [countdown, setCountdown] = useState(15);
+  const [countdown, setCountdown] = useState(30);
 
   // Navigation tabs for tournament dashboard
   const [activeDashboardTab, setActiveDashboardTab] = useState("SCOUTING"); // SCOUTING, STANDINGS, STATS
@@ -525,6 +525,8 @@ export default function App() {
 
   // Supabase Tournament History states
   const [supabaseTournamentId, setSupabaseTournamentId] = useState(null);
+  const [activeTournaments, setActiveTournaments] = useState([]);
+  const [loadingActiveTournaments, setLoadingActiveTournaments] = useState(false);
   const [historicalRuns, setHistoricalRuns] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [expandedRunId, setExpandedRunId] = useState(null);
@@ -776,7 +778,13 @@ export default function App() {
     const localId = 'local-' + Math.random().toString(36).substring(2, 9);
     setSupabaseTournamentId(localId);
 
-    if (!supabase || !user) return;
+    // Save to active tournaments initially
+    if (roomState.isSinglePlayer && roomState.aiMode === 'tournament') {
+      const updatedState = { ...roomState, supabaseTournamentId: localId };
+      await saveActiveTournament(updatedState);
+    }
+
+    if (!supabase || !user || user.id.startsWith('local-')) return;
 
     try {
       const userPlayer = roomState.players.find(p => p.id === socket?.id) || roomState.players[0];
@@ -795,9 +803,278 @@ export default function App() {
 
       if (error) throw error;
       setSupabaseTournamentId(data.id);
+
+      // Update active tournament with correct supabase database tournament id
+      if (roomState.isSinglePlayer && roomState.aiMode === 'tournament') {
+        const updatedState = { ...roomState, supabaseTournamentId: data.id };
+        await saveActiveTournament(updatedState);
+      }
     } catch (err) {
       console.error("Error creating tournament record:", err.message);
     }
+  };
+
+  const saveActiveTournament = async (roomState) => {
+    if (!roomState) return false;
+    
+    const stateToSave = {
+      ...roomState,
+      supabaseTournamentId: supabaseTournamentId || roomState.supabaseTournamentId
+    };
+
+    if (supabase && isSupabaseConfigured && user && !user.id.startsWith('local-')) {
+      try {
+        let activeId = roomState.activeTournamentId;
+        if (!activeId) {
+          const { data: list, error: countError } = await supabase
+            .from('active_tournaments')
+            .select('id')
+            .eq('user_id', user.id);
+          
+          if (!countError && list && list.length >= 5) {
+            setAlertMessage("MAX ACTIVE TOURNAMENTS (5) REACHED! PLEASE TERMINATE A SESSION FIRST.");
+            setTimeout(() => setAlertMessage(''), 3000);
+            return false;
+          }
+
+          const { data, error } = await supabase
+            .from('active_tournaments')
+            .insert({
+              user_id: user.id,
+              user_name: playerName,
+              room_state: stateToSave
+            })
+            .select()
+            .single();
+          
+          if (error) throw error;
+          if (data) {
+            roomState.activeTournamentId = data.id;
+          }
+        } else {
+          const { error } = await supabase
+            .from('active_tournaments')
+            .update({
+              room_state: stateToSave,
+              last_saved_at: new Date().toISOString()
+            })
+            .eq('id', activeId);
+          
+          if (error) throw error;
+        }
+        return true;
+      } catch (err) {
+        console.error("Error saving active tournament:", err.message);
+        return false;
+      }
+    } else {
+      // Local storage fallback for Guest
+      try {
+        const localActive = JSON.parse(localStorage.getItem('active_tournaments') || '[]');
+        let activeId = roomState.activeTournamentId;
+        
+        if (!activeId) {
+          const userActiveCount = localActive.filter(t => t.user_id === user?.id || t.user_name === playerName).length;
+          if (userActiveCount >= 5) {
+            setAlertMessage("MAX ACTIVE TOURNAMENTS (5) REACHED! PLEASE TERMINATE A SESSION FIRST.");
+            setTimeout(() => setAlertMessage(''), 3000);
+            return false;
+          }
+          activeId = 'active-local-' + Date.now();
+          roomState.activeTournamentId = activeId;
+          stateToSave.activeTournamentId = activeId;
+
+          localActive.push({
+            id: activeId,
+            user_id: user?.id || 'local-guest',
+            user_name: playerName,
+            created_at: new Date().toISOString(),
+            last_saved_at: new Date().toISOString(),
+            room_state: stateToSave
+          });
+        } else {
+          const idx = localActive.findIndex(t => t.id === activeId);
+          if (idx !== -1) {
+            localActive[idx].room_state = stateToSave;
+            localActive[idx].last_saved_at = new Date().toISOString();
+          } else {
+            localActive.push({
+              id: activeId,
+              user_id: user?.id || 'local-guest',
+              user_name: playerName,
+              created_at: new Date().toISOString(),
+              last_saved_at: new Date().toISOString(),
+              room_state: stateToSave
+            });
+          }
+        }
+        localStorage.setItem('active_tournaments', JSON.stringify(localActive));
+        return true;
+      } catch (e) {
+        console.warn("Error saving active tournament locally:", e);
+        return false;
+      }
+    }
+  };
+
+  const terminateActiveTournament = async (roomState) => {
+    if (!roomState) return;
+
+    const activeId = roomState.activeTournamentId;
+    const tourneyId = supabaseTournamentId || roomState.supabaseTournamentId;
+
+    // 1. Log to history as Terminated
+    try {
+      const localHistory = JSON.parse(localStorage.getItem('local_match_history') || '[]');
+      const userPlayer = roomState.players?.find(p => p.id === socket?.id) || roomState.players?.[0];
+      const existingIdx = localHistory.findIndex(t => t.id === tourneyId);
+      if (existingIdx !== -1) {
+        localHistory[existingIdx].is_terminated = true;
+        localHistory[existingIdx].won_cup = false;
+      } else {
+        localHistory.push({
+          id: tourneyId || 'local-' + Date.now(),
+          user_team: userPlayer?.teamName || "Brazil",
+          type: 'AI',
+          stages_played: roomState.matchesPlayed || 0,
+          won_cup: false,
+          is_terminated: true,
+          created_at: new Date().toISOString(),
+          tournament_matches: []
+        });
+      }
+      localStorage.setItem('local_match_history', JSON.stringify(localHistory));
+    } catch (e) {
+      console.warn("Local history log error on terminate:", e);
+    }
+
+    if (supabase && isSupabaseConfigured && user && tourneyId && !tourneyId.startsWith('local-')) {
+      try {
+        await supabase
+          .from('tournaments')
+          .update({
+            is_terminated: true,
+            won_cup: false
+          })
+          .eq('id', tourneyId);
+      } catch (err) {
+        console.error("Supabase history update error on terminate:", err.message);
+      }
+    }
+
+    // 2. Free the slot (delete from active tournaments)
+    if (supabase && isSupabaseConfigured && user && activeId && !activeId.startsWith('active-local-')) {
+      try {
+        await supabase
+          .from('active_tournaments')
+          .delete()
+          .eq('id', activeId);
+      } catch (err) {
+        console.error("Supabase active delete error on terminate:", err.message);
+      }
+    } else if (activeId) {
+      try {
+        const localActive = JSON.parse(localStorage.getItem('active_tournaments') || '[]');
+        const updated = localActive.filter(t => t.id !== activeId);
+        localStorage.setItem('active_tournaments', JSON.stringify(updated));
+      } catch (e) {
+        console.warn("Local active delete error on terminate:", e);
+      }
+    }
+  };
+
+  const fetchActiveTournaments = async () => {
+    setLoadingActiveTournaments(true);
+    if (supabase && isSupabaseConfigured && user && !user.id.startsWith('local-')) {
+      try {
+        const { data, error } = await supabase
+          .from('active_tournaments')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('last_saved_at', { ascending: false });
+
+        if (error) throw error;
+        setActiveTournaments(data || []);
+      } catch (err) {
+        console.error("Error fetching active tournaments:", err.message);
+      }
+    } else {
+      try {
+        const localActive = JSON.parse(localStorage.getItem('active_tournaments') || '[]');
+        const filtered = localActive.filter(t => t.user_id === user?.id || t.user_name === playerName);
+        setActiveTournaments(filtered);
+      } catch (e) {
+        console.warn("Error reading local active tournaments:", e);
+      }
+    }
+    setLoadingActiveTournaments(false);
+  };
+
+  const handleResumeTournament = (tourney) => {
+    if (!playerName || !tourney || !tourney.room_state) return;
+
+    setLoadingText('RESUMING CAMPAIGN...');
+    setScreenLoading(true);
+
+    const roomState = tourney.room_state;
+    roomState.activeTournamentId = tourney.id;
+    setSupabaseTournamentId(roomState.supabaseTournamentId || null);
+    setRoomId(roomState.roomId);
+    setIsSinglePlayer(true);
+
+    setTimeout(() => {
+      if (socket) {
+        socket.emit('resume_room', { roomState });
+      }
+      setScreenLoading(false);
+    }, 600);
+  };
+
+  const handleDeleteActiveTournament = async (tourney) => {
+    if (!tourney) return;
+    if (window.confirm("Are you sure you want to terminate this campaign? It will be marked as Terminated in history and the slot will be freed.")) {
+      setLoadingActiveTournaments(true);
+      await terminateActiveTournament(tourney.room_state);
+      await fetchActiveTournaments();
+    }
+  };
+
+  const handleStartSingleMatch = () => {
+    if (!playerName) return;
+    setLoadingText('BOOTING QUICK MATCH...');
+    setScreenLoading(true);
+    const rId = "SOLO-" + Math.random().toString(36).substring(2, 6).toUpperCase();
+    setRoomId(rId);
+    setIsSinglePlayer(true);
+    setTimeout(() => {
+      socket.emit('join_room', { 
+        roomId: rId, 
+        playerName, 
+        isHost: true, 
+        isSinglePlayer: true,
+        aiMode: 'single'
+      });
+      setScreenLoading(false);
+    }, 600);
+  };
+
+  const handleStartTournamentCampaign = () => {
+    if (!playerName) return;
+    setLoadingText('BOOTING CAMPAIGN...');
+    setScreenLoading(true);
+    const rId = "SOLO-" + Math.random().toString(36).substring(2, 6).toUpperCase();
+    setRoomId(rId);
+    setIsSinglePlayer(true);
+    setTimeout(() => {
+      socket.emit('join_room', { 
+        roomId: rId, 
+        playerName, 
+        isHost: true, 
+        isSinglePlayer: true,
+        aiMode: 'tournament'
+      });
+      setScreenLoading(false);
+    }, 600);
   };
 
   const saveMatchToSupabase = async (matchDetails, roomState) => {
@@ -892,6 +1169,30 @@ export default function App() {
     } catch (err) {
       console.error("Error saving match details:", err.message);
     }
+
+    // Update active tournament record with new roomState, or delete if finished
+    if (roomState.isSinglePlayer && roomState.aiMode === 'tournament') {
+      if (roomState.status === 'finished') {
+        const activeId = roomState.activeTournamentId;
+        if (activeId) {
+          if (supabase && isSupabaseConfigured && user && !user.id.startsWith('local-') && !activeId.startsWith('active-local-')) {
+            supabase.from('active_tournaments').delete().eq('id', activeId).then(({ error }) => {
+              if (error) console.error("Error deleting finished active tournament:", error.message);
+            });
+          } else {
+            try {
+              const localActive = JSON.parse(localStorage.getItem('active_tournaments') || '[]');
+              const updated = localActive.filter(t => t.id !== activeId);
+              localStorage.setItem('active_tournaments', JSON.stringify(updated));
+            } catch (e) {
+              console.warn("Error deleting finished active tournament locally:", e);
+            }
+          }
+        }
+      } else {
+        saveActiveTournament(roomState);
+      }
+    }
   };
 
   const loadTournamentHistory = async () => {
@@ -916,6 +1217,7 @@ export default function App() {
           type,
           stages_played,
           won_cup,
+          is_terminated,
           created_at,
           tournament_matches (
             match_num,
@@ -1143,8 +1445,14 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (landingSubmenu === "TOURNAMENT_MANAGER") {
+      fetchActiveTournaments();
+    }
+  }, [landingSubmenu]);
+
+  useEffect(() => {
     if (room && !room.isSinglePlayer && room.status === 'tournament' && localPlayer && !localPlayer.ready) {
-      setCountdown(15);
+      setCountdown(30);
       const timer = setInterval(() => {
         setCountdown(prev => {
           if (prev <= 1) {
@@ -1297,6 +1605,7 @@ export default function App() {
     setSimulationActive(false);
     setSimDetails(null);
     setSupabaseTournamentId(null);
+    setIsSinglePlayer(false);
     startingTournamentRef.current = false;
     setLandingSubmenu("MAIN");
   };
@@ -1654,6 +1963,76 @@ export default function App() {
   const renderExitConfirmModal = () => {
     if (!showExitConfirm) return null;
     const isMultiplayerActive = room && !room.isSinglePlayer && room.status !== 'finished' && room.status !== 'lobby';
+    
+    // Check if it is a single-player tournament campaign (where we can save or terminate)
+    const isSinglePlayerCampaignActive = room && room.isSinglePlayer && room.aiMode === 'tournament' && room.status !== 'finished';
+
+    if (isSinglePlayerCampaignActive) {
+      return (
+        <div className="retro-popup-overlay" style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.85)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 99999,
+          padding: '20px'
+        }}>
+          <div className="exit-confirm-panel text-center" style={{ borderColor: 'var(--color-gold)' }}>
+            <div className="flex justify-center text-yellow-500">
+              <AlertCircle size={36} />
+            </div>
+            <div className="space-y-1">
+              <h3 className="logo-heading" style={{ fontSize: '1.25rem', color: 'var(--color-gold)' }}>
+                EXIT CAMPAIGN?
+              </h3>
+              <p className="text-xs" style={{ color: 'var(--color-text-dim)', lineHeight: '1.3' }}>
+                Would you like to save your progress and exit, or terminate this tournament campaign permanently?
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 w-full mt-4">
+              <button 
+                onClick={async () => {
+                  const ok = await saveActiveTournament(room);
+                  if (ok !== false) {
+                    handleLeaveRoom();
+                    setShowExitConfirm(false);
+                  }
+                }}
+                className="btn-sports w-full"
+                style={{ fontSize: '0.75rem', padding: '8px', background: '#2ecc71', color: '#fff', border: '1px solid #2ecc71' }}
+              >
+                Save & Exit
+              </button>
+              <button 
+                onClick={async () => {
+                  if (window.confirm("Are you sure you want to terminate this campaign? All progress will be lost and slot will be freed.")) {
+                    await terminateActiveTournament(room);
+                    handleLeaveRoom();
+                    setShowExitConfirm(false);
+                  }
+                }}
+                className="btn-sports w-full"
+                style={{ fontSize: '0.75rem', padding: '8px', background: '#c0392b', color: '#fff', border: '1px solid #c0392b' }}
+              >
+                Terminate Campaign
+              </button>
+              <button 
+                onClick={() => {
+                  setShowExitConfirm(false);
+                }}
+                className="btn-sports-secondary w-full"
+                style={{ fontSize: '0.75rem', padding: '8px' }}
+              >
+                Cancel (Keep Playing)
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="retro-popup-overlay" style={{
         position: 'fixed',
@@ -1738,7 +2117,7 @@ export default function App() {
               MATCH FORFEITED
             </h3>
             <p className="text-xs" style={{ color: 'var(--color-text-dim)', lineHeight: '1.3' }}>
-              You failed to click 'Kick Off Match' within 15 seconds. You have forfeited the match with a 3-0 loss.
+              You failed to click 'Kick Off Match' within 30 seconds. You have forfeited the match with a 3-0 loss.
             </p>
           </div>
           <button 
@@ -2002,11 +2381,11 @@ export default function App() {
               {landingSubmenu === "MAIN" && (
                 <>
                   <button 
-                    onClick={handleSinglePlayer}
+                    onClick={() => setLandingSubmenu("SINGLE_PLAYER_CHOOSE")}
                     disabled={!playerName}
                     className="btn-sports w-full"
                   >
-                    <Sparkles size={18} /> Play Campaign (VS AI)
+                    <Sparkles size={18} /> Play VS AI (Solo)
                   </button>
 
                   <button 
@@ -2017,6 +2396,100 @@ export default function App() {
                     <Users size={18} /> Multiplayer
                   </button>
                 </>
+              )}
+
+              {landingSubmenu === "SINGLE_PLAYER_CHOOSE" && (
+                <div className="space-y-4">
+                  <div className="text-center text-xs" style={{ color: 'var(--color-text-dim)', fontWeight: 'bold' }}>SELECT SOLO MODE</div>
+                  
+                  <button 
+                    onClick={handleStartSingleMatch}
+                    className="btn-sports w-full"
+                  >
+                    Quick Match VS AI
+                  </button>
+
+                  <button 
+                    onClick={() => setLandingSubmenu("TOURNAMENT_MANAGER")}
+                    className="btn-sports w-full font-bold"
+                  >
+                    Tournament Manager
+                  </button>
+
+                  <button 
+                    onClick={() => setLandingSubmenu("MAIN")}
+                    className="btn-sports-secondary w-full"
+                  >
+                    Back
+                  </button>
+                </div>
+              )}
+
+              {landingSubmenu === "TOURNAMENT_MANAGER" && (
+                <div className="space-y-4">
+                  <div className="text-center text-xs font-bold" style={{ color: 'var(--color-gold)' }}>TOURNAMENT CAMPAIGN MANAGER</div>
+                  
+                  {loadingActiveTournaments ? (
+                    <div className="text-center py-4 text-xs animate-pulse" style={{ color: 'var(--color-text-dim)' }}>
+                      LOADING ACTIVE CAMPAIGNS...
+                    </div>
+                  ) : activeTournaments.length === 0 ? (
+                    <div className="text-center py-4 text-xs" style={{ color: 'var(--color-text-dim)' }}>
+                      No active campaigns found. Start a new one!
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                      {activeTournaments.map((t) => {
+                        const savedDate = new Date(t.last_saved_at || t.created_at).toLocaleDateString(undefined, {
+                          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                        });
+                        const pName = t.room_state?.players?.[0]?.name || "Guest";
+                        const tName = t.room_state?.players?.[0]?.teamName || "Brazil";
+                        const matchesPlayed = t.room_state?.matchesPlayed || 0;
+                        return (
+                          <div key={t.id} className="p-3 rounded border flex justify-between items-center bg-black/40 text-left" style={{ borderColor: 'rgba(255, 255, 255, 0.1)' }}>
+                            <div>
+                              <div className="text-xs font-bold text-white">{tName} <span className="text-[10px] text-slate-400">({pName})</span></div>
+                              <div className="text-[9px] text-slate-500 mt-1">Match {matchesPlayed + 1} of 8 • Saved: {savedDate}</div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleResumeTournament(t)}
+                                className="btn-sports"
+                                style={{ padding: '4px 8px', fontSize: '0.65rem', width: 'auto' }}
+                              >
+                                Resume
+                              </button>
+                              <button
+                                onClick={() => handleDeleteActiveTournament(t)}
+                                className="btn-sports"
+                                style={{ padding: '4px 8px', fontSize: '0.65rem', width: 'auto', background: '#c0392b', border: '1px solid #c0392b' }}
+                              >
+                                Terminate
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <button 
+                    onClick={handleStartTournamentCampaign}
+                    disabled={activeTournaments.length >= 5}
+                    className="btn-sports w-full font-bold"
+                    style={activeTournaments.length >= 5 ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
+                  >
+                    {activeTournaments.length >= 5 ? "Campaign Slots Full (Max 5)" : "+ Start New Campaign"}
+                  </button>
+
+                  <button 
+                    onClick={() => setLandingSubmenu("SINGLE_PLAYER_CHOOSE")}
+                    className="btn-sports-secondary w-full"
+                  >
+                    Back
+                  </button>
+                </div>
               )}
 
               {landingSubmenu === "MULTIPLAYER_CHOOSE" && (
@@ -2687,7 +3160,9 @@ export default function App() {
       : room.players[0]?.id === socket?.id;
     const wonCup = hasFinished && (
       room.isSinglePlayer 
-        ? (room.matchesPlayed >= 8 && lastMatch && lastMatch.scoreA > lastMatch.scoreB)
+        ? (room.aiMode === 'single'
+            ? (lastMatch && lastMatch.scoreA > lastMatch.scoreB)
+            : (room.matchesPlayed >= 8 && lastMatch && lastMatch.scoreA > lastMatch.scoreB))
         : (room.matchesPlayed === 1 && lastMatch && (isP1 ? lastMatch.scoreA > lastMatch.scoreB : lastMatch.scoreB > lastMatch.scoreA))
     );
 
@@ -2710,14 +3185,14 @@ export default function App() {
               <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>
                 {hasFinished 
                   ? (wonCup ? (room.isSinglePlayer ? "🏆 CHAMPION!" : "🏆 VICTORY!") : "💀 DEFEATED") 
-                  : (room.isSinglePlayer 
+                  : (room.isSinglePlayer && room.aiMode !== 'single'
                       ? `STAGE RUN: MATCH ${room.matchesPlayed + 1} OF 8` 
                       : "CHALLENGE MATCH: 1-GAME FINAL")
                 }
               </h2>
               <p className="text-xs font-bold" style={{ color: 'var(--color-gold)', marginTop: '4px' }}>
                 {hasFinished ? (wonCup ? (room.isSinglePlayer ? "YOU CLAIMED SUPREME GLORY!" : "YOU WON THE DUEL!") : "YOU LOST THE DUEL") : (
-                  room.isSinglePlayer ? (
+                  room.isSinglePlayer && room.aiMode !== 'single' ? (
                     room.matchesPlayed < 3 
                       ? `GROUP STAGE MATCH - GROUP A`
                       : room.matchesPlayed === 3 ? "ROUND of 32 (GAME 4)"
@@ -2767,7 +3242,7 @@ export default function App() {
         {/* Dashboard Tabs Toggle */}
         <div className="tab-row">
           <button onClick={() => setActiveDashboardTab("SCOUTING")} className={`tab-btn ${activeDashboardTab === "SCOUTING" ? 'active' : ''}`}>Squad Scouting</button>
-          {room.isSinglePlayer && <button onClick={() => setActiveDashboardTab("STANDINGS")} className={`tab-btn ${activeDashboardTab === "STANDINGS" ? 'active' : ''}`}>All Groups Standings</button>}
+          {room.isSinglePlayer && room.aiMode !== 'single' && <button onClick={() => setActiveDashboardTab("STANDINGS")} className={`tab-btn ${activeDashboardTab === "STANDINGS" ? 'active' : ''}`}>All Groups Standings</button>}
           <button onClick={() => setActiveDashboardTab("STATS")} className={`tab-btn ${activeDashboardTab === "STATS" ? 'active' : ''}`}>Leaderboards</button>
           {user && <button onClick={() => setActiveDashboardTab("HISTORY")} className={`tab-btn ${activeDashboardTab === "HISTORY" ? 'active' : ''}`}>🏆 {room.isSinglePlayer ? "Tournament History" : "Match History"}</button>}
         </div>
@@ -2989,7 +3464,7 @@ export default function App() {
               </div>
             </div>
 
-            {room.allGroupsStandings[selectedStandingsGroup] ? (
+            {room.allGroupsStandings && room.allGroupsStandings[selectedStandingsGroup] ? (
               <table className="retro-table">
                 <thead>
                   <tr>
@@ -3142,7 +3617,8 @@ export default function App() {
                     year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
                   });
 
-                  const getStageLabel = (stagesPlayed, wonCup) => {
+                  const getStageLabel = (stagesPlayed, wonCup, isTerminated) => {
+                    if (isTerminated) return "❌ TERMINATED";
                     if (wonCup) return "🏆 CHAMPIONS!";
                     if (stagesPlayed <= 3) return "Group Stage";
                     if (stagesPlayed === 4) return "Round of 32";
@@ -3169,8 +3645,8 @@ export default function App() {
                         </div>
                         
                         <div className="flex items-center gap-4">
-                          <span className="text-xs font-extrabold" style={{ color: run.won_cup ? 'var(--color-gold)' : 'var(--color-white)' }}>
-                            {getStageLabel(run.stages_played, run.won_cup)}
+                          <span className="text-xs font-extrabold" style={{ color: run.won_cup ? 'var(--color-gold)' : run.is_terminated ? '#c0392b' : 'var(--color-white)' }}>
+                            {getStageLabel(run.stages_played, run.won_cup, run.is_terminated)}
                           </span>
                           <button 
                             onClick={() => setExpandedRunId(isExpanded ? null : run.id)}

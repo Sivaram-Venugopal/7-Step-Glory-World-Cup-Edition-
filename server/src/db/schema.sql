@@ -5,6 +5,7 @@ DROP TABLE IF EXISTS public.players CASCADE;
 DROP TABLE IF EXISTS public.historical_teams CASCADE;
 DROP TABLE IF EXISTS public.managers CASCADE;
 DROP TABLE IF EXISTS public.manager_accounts CASCADE;
+DROP TABLE IF EXISTS public.active_tournaments CASCADE;
 
 -- 1. Create Historical Teams Table
 CREATE TABLE public.historical_teams (
@@ -73,6 +74,7 @@ CREATE TABLE public.tournaments (
     type TEXT NOT NULL CHECK (type IN ('AI', 'Friend')),
     stages_played INTEGER NOT NULL DEFAULT 0,
     won_cup BOOLEAN NOT NULL DEFAULT false,
+    is_terminated BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
@@ -133,3 +135,32 @@ ON public.manager_accounts FOR SELECT USING (true);
 -- Allow public insert access to register new accounts
 CREATE POLICY "Allow public insert access to manager_accounts"
 ON public.manager_accounts FOR INSERT WITH CHECK (true);
+
+-- 7. Create Active Tournaments Table to save/resume up to 5 tournament states
+CREATE TABLE public.active_tournaments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
+    user_name TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    last_saved_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    room_state JSONB NOT NULL
+);
+
+-- Enable RLS
+ALTER TABLE public.active_tournaments ENABLE ROW LEVEL SECURITY;
+
+-- Allow public read access
+CREATE POLICY "Allow public read access to active_tournaments"
+ON public.active_tournaments FOR SELECT USING (true);
+
+-- Allow public insert access
+CREATE POLICY "Allow public insert access to active_tournaments"
+ON public.active_tournaments FOR INSERT WITH CHECK (true);
+
+-- Allow public update access
+CREATE POLICY "Allow public update access to active_tournaments"
+ON public.active_tournaments FOR UPDATE USING (true);
+
+-- Allow public delete access
+CREATE POLICY "Allow public delete access to active_tournaments"
+ON public.active_tournaments FOR DELETE USING (true);
