@@ -230,6 +230,94 @@ function getNationColors(teamId) {
   return [bgGrayscale, fgGrayscale];
 }
 
+const playerImageCache = new Map();
+
+function PlayerImageOrJersey({ name, teamId, size = 42 }) {
+  const [imgUrl, setImgUrl] = useState(playerImageCache.get(name) || null);
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    if (playerImageCache.has(name)) {
+      setImgUrl(playerImageCache.get(name));
+      return;
+    }
+
+    let isMounted = true;
+    const fetchImage = async () => {
+      try {
+        const query = encodeURIComponent(name);
+        const url = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${query}&gsrlimit=1&prop=pageimages&pithumbsize=120&format=json&origin=*`;
+        
+        const res = await fetch(url);
+        const data = await res.json();
+        
+        if (data.query && data.query.pages) {
+          const pages = data.query.pages;
+          const pageId = Object.keys(pages)[0];
+          const thumbnail = pages[pageId]?.thumbnail;
+          if (thumbnail && thumbnail.source) {
+            const src = thumbnail.source;
+            playerImageCache.set(name, src);
+            if (isMounted) {
+              setImgUrl(src);
+            }
+            return;
+          }
+        }
+      } catch (e) {
+        console.error("Wikimedia error for " + name, e);
+      }
+      
+      playerImageCache.set(name, null);
+    };
+
+    fetchImage();
+    return () => {
+      isMounted = false;
+    };
+  }, [name]);
+
+  const initials = getInitials(name);
+  const fallbackJersey = renderJerseySVG(teamId, initials, size);
+
+  if (imgUrl && !hasError) {
+    return (
+      <div 
+        className="player-avatar-wrapper"
+        style={{ 
+          width: size, 
+          height: size, 
+          borderRadius: '50%', 
+          overflow: 'hidden', 
+          border: '1.5px solid var(--color-gold)', 
+          background: '#090909',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: '0 0 8px rgba(255,215,0,0.25)',
+          position: 'relative'
+        }}
+      >
+        <img 
+          src={imgUrl} 
+          alt={name} 
+          style={{ 
+            width: '100%', 
+            height: '100%', 
+            objectFit: 'cover'
+          }} 
+          onError={() => {
+            playerImageCache.set(name, null);
+            setHasError(true);
+          }}
+        />
+      </div>
+    );
+  }
+
+  return fallbackJersey;
+}
+
 const JERSEY_PATH = 'M22 6 L10 12 L4 26 L14 32 L20 27 L20 58 L44 58 L44 27 L50 32 L60 26 L54 12 L42 6 C42 6 38 12 32 12 C26 12 22 6 22 6 Z';
 function renderJerseySVG(teamId, initials, size = 42) {
   const [bg, ink] = getNationColors(teamId);
@@ -2258,7 +2346,7 @@ export default function App() {
                           </div>
                           
                           <div className="fut-card-badge">
-                            {renderJerseySVG(localSpunTeams[room.draftRound - 1], getInitials(choice.name), 42)}
+                            <PlayerImageOrJersey name={choice.name} teamId={localSpunTeams[room.draftRound - 1]} size={42} />
                           </div>
                           
                           <span className="fut-card-name" title={choice.name}>{choice.name.split(' ').pop()}</span>
@@ -2335,7 +2423,7 @@ export default function App() {
                 >
                   {draftedPlayer ? (
                     <div style={{ position: 'relative', width: '64px', height: '64px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      {renderJerseySVG(draftedPlayer.teamId || localSpunTeams[room.draftRound - 1], getInitials(draftedPlayer.name), 46)}
+                      <PlayerImageOrJersey name={draftedPlayer.name} teamId={draftedPlayer.teamId || localSpunTeams[room.draftRound - 1]} size={46} />
                       <div className="slot-ov">
                         {draftedPlayer.rating}
                       </div>
@@ -2384,7 +2472,7 @@ export default function App() {
                     >
                       {player ? (
                         <>
-                          {renderJerseySVG(player.teamId || localSpunTeams[room.draftRound - 1], getInitials(player.name), 36)}
+                          <PlayerImageOrJersey name={player.name} teamId={player.teamId || localSpunTeams[room.draftRound - 1]} size={36} />
                           <div className="slot-ov" style={{
                             position: 'absolute',
                             top: '4px',
@@ -2625,7 +2713,7 @@ export default function App() {
                     >
                       {player ? (
                         <div style={{ position: 'relative', width: '64px', height: '64px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                          {renderJerseySVG(player.teamId, getInitials(player.name), 46)}
+                          <PlayerImageOrJersey name={player.name} teamId={player.teamId} size={46} />
                           <div className="slot-ov">
                             {player.rating}
                           </div>
@@ -2668,7 +2756,7 @@ export default function App() {
                       >
                         {player ? (
                           <>
-                            {renderJerseySVG(player.teamId, getInitials(player.name), 36)}
+                            <PlayerImageOrJersey name={player.name} teamId={player.teamId} size={36} />
                             <div className="slot-ov" style={{
                               position: 'absolute',
                               top: '4px',
@@ -3043,7 +3131,7 @@ export default function App() {
                           <span>{p.position}</span>
                         </div>
                         <div style={{ margin: '2px 0' }}>
-                          {renderJerseySVG(p.teamId || opponent.manager?.country, getInitials(p.name), 30)}
+                          <PlayerImageOrJersey name={p.name} teamId={p.teamId || opponent.manager?.country} size={30} />
                         </div>
                         <span className="font-bold text-center" style={{ width: '100%', fontSize: '0.62rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '2px' }}>
                           {p.name.split(' ').pop()}
