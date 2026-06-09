@@ -447,6 +447,12 @@ export default function App() {
   const [alertMessage, setAlertMessage] = useState('');
   const [shootoutState, setShootoutState] = useState(null); // 'shoot' | 'save' | null
   const [shootoutEvent, setShootoutEvent] = useState(null);
+  const [prevShootoutEventsLength, setPrevShootoutEventsLength] = useState(0);
+
+  const handleInteractiveShootoutChoice = (spotIdx) => {
+    if (!room || !socket) return;
+    socket.emit('submit_shootout_choice', { roomId: room.roomId, choice: spotIdx });
+  };
 
   const handleShootoutChoice = (spotIdx) => {
     if (!shootoutEvent) return;
@@ -951,6 +957,10 @@ export default function App() {
         }
         return roomState;
       });
+      if (roomState.status === 'shootout') {
+        setSimulationActive(true);
+        setSimFinished(false);
+      }
       const lp = roomState.players.find(p => p.id === s.id);
       setLocalPlayer(lp);
 
@@ -1154,6 +1164,47 @@ export default function App() {
       setSimFinished(true);
     }
   }, [simulationActive, eventIndex, simDetails, shootoutState, localPlayer]);
+
+  useEffect(() => {
+    if (room && room.status === 'shootout' && room.shootout) {
+      const events = room.shootout.events || [];
+      if (events.length > prevShootoutEventsLength) {
+        const lastEvent = events[events.length - 1];
+        const isGoal = lastEvent.type === 'goal';
+        const isWhistle = lastEvent.type === 'whistle';
+        
+        if (!isWhistle) {
+          setAlertMessage(lastEvent.text);
+          playSound('kick');
+          
+          const randomSpot = Math.floor(Math.random() * 9) + 1;
+          const spots = {
+            1: { x: '35%', y: '32%' }, 2: { x: '50%', y: '30%' }, 3: { x: '65%', y: '32%' },
+            4: { x: '34%', y: '45%' }, 5: { x: '50%', y: '43%' }, 6: { x: '66%', y: '45%' },
+            7: { x: '36%', y: '58%' }, 8: { x: '50%', y: '56%' }, 9: { x: '64%', y: '58%' }
+          };
+          setBallPos(spots[randomSpot]);
+          
+          setTimeout(() => {
+            if (isGoal) {
+              playSound('goal');
+            } else {
+              playSound('kick');
+            }
+          }, 600);
+          
+          setTimeout(() => {
+            setAlertMessage('');
+            setBallPos({ x: '50%', y: '75%' });
+          }, 3500);
+        }
+        
+        setPrevShootoutEventsLength(events.length);
+      }
+    } else if (room && room.status !== 'shootout') {
+      setPrevShootoutEventsLength(0);
+    }
+  }, [room?.shootout?.events?.length, room?.status]);
 
   useEffect(() => {
     eventListEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -3241,31 +3292,62 @@ export default function App() {
               </div>
 
               {/* Interactive Penalty Shootout spot selection */}
-              {shootoutState && shootoutEvent && (
-                <div className="shootout-overlay">
-                  <div className="text-center mb-3">
-                    <h4 className="text-sm font-bold uppercase text-white" style={{ color: 'var(--color-gold)' }}>
-                      {shootoutState === 'shoot' ? '🎯 TAKE THE PENALTY' : '🧤 DIVING SAVE'}
-                    </h4>
-                    <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>
-                      {shootoutState === 'shoot' 
-                        ? 'Select a target area to strike the penalty kick:' 
-                        : 'Anticipate the striker and select a corner to dive:'}
-                    </p>
+              {room.status === 'shootout' && room.shootout && (() => {
+                const localPlayerRole = room.shootout.strikerId === socket?.id ? 'striker' : (room.shootout.keeperId === socket?.id ? 'keeper' : 'spectator');
+                const hasSubmitted = localPlayerRole === 'striker' ? room.shootout.hasSubmittedStriker : (localPlayerRole === 'keeper' ? room.shootout.hasSubmittedKeeper : true);
+                
+                return (
+                  <div className="shootout-overlay">
+                    <div className="text-center mb-3">
+                      <h4 className="text-sm font-bold uppercase text-white" style={{ color: 'var(--color-gold)' }}>
+                        🏆 INTERACTIVE PENALTY SHOOTOUT
+                      </h4>
+                      <p className="text-xs font-mono text-slate-300">
+                        Round {room.shootout.round} | {room.shootout.teamAName} {room.shootout.scoreA} - {room.shootout.scoreB} {room.shootout.teamBName}
+                      </p>
+                      {hasSubmitted ? (
+                        <p className="text-xs animate-pulse text-amber-500 font-bold mt-2">
+                          Waiting for opponent to make their selection...
+                        </p>
+                      ) : (
+                        <>
+                          <h5 className="text-xs uppercase font-bold text-white mt-2">
+                            {localPlayerRole === 'striker' ? '🎯 YOU ARE TAKING THE PENALTY' : '🧤 YOU ARE DEFENDING'}
+                          </h5>
+                          <p className="text-[10px]" style={{ color: 'var(--color-text-dim)' }}>
+                            {localPlayerRole === 'striker' 
+                              ? 'Select a target area to strike the penalty kick:' 
+                              : 'Anticipate the striker and select a corner to dive:'}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    
+                    {!hasSubmitted && (
+                      <div className="penalty-goal-grid">
+                        <button onClick={() => handleInteractiveShootoutChoice(1)} className="penalty-spot-btn">Top Left</button>
+                        <button onClick={() => handleInteractiveShootoutChoice(2)} className="penalty-spot-btn">Top Center</button>
+                        <button onClick={() => handleInteractiveShootoutChoice(3)} className="penalty-spot-btn">Top Right</button>
+                        <button onClick={() => handleInteractiveShootoutChoice(4)} className="penalty-spot-btn">Mid Left</button>
+                        <button onClick={() => handleInteractiveShootoutChoice(5)} className="penalty-spot-btn">Center</button>
+                        <button onClick={() => handleInteractiveShootoutChoice(6)} className="penalty-spot-btn">Mid Right</button>
+                        <button onClick={() => handleInteractiveShootoutChoice(7)} className="penalty-spot-btn">Bottom L</button>
+                        <button onClick={() => handleInteractiveShootoutChoice(8)} className="penalty-spot-btn">Bottom C</button>
+                        <button onClick={() => handleInteractiveShootoutChoice(9)} className="penalty-spot-btn">Bottom R</button>
+                      </div>
+                    )}
+                    
+                    {/* Shootout commentary log */}
+                    <div className="mt-3 max-h-[80px] overflow-y-auto space-y-1 text-left border-t border-white/10 pt-2 text-[10px] font-mono text-slate-400">
+                      {room.shootout.events.map((e, idx) => (
+                        <div key={idx} className="border-b border-white/5 pb-1 last:border-none">
+                          {e.text}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div className="penalty-goal-grid">
-                    <button onClick={() => handleShootoutChoice(1)} className="penalty-spot-btn">Top Left</button>
-                    <button onClick={() => handleShootoutChoice(2)} className="penalty-spot-btn">Top Center</button>
-                    <button onClick={() => handleShootoutChoice(3)} className="penalty-spot-btn">Top Right</button>
-                    <button onClick={() => handleShootoutChoice(4)} className="penalty-spot-btn">Mid Left</button>
-                    <button onClick={() => handleShootoutChoice(5)} className="penalty-spot-btn">Center</button>
-                    <button onClick={() => handleShootoutChoice(6)} className="penalty-spot-btn">Mid Right</button>
-                    <button onClick={() => handleShootoutChoice(7)} className="penalty-spot-btn">Bottom L</button>
-                    <button onClick={() => handleShootoutChoice(8)} className="penalty-spot-btn">Bottom C</button>
-                    <button onClick={() => handleShootoutChoice(9)} className="penalty-spot-btn">Bottom R</button>
-                  </div>
-                </div>
-              )}
+                );
+              })()}
 
               <div className="ticker-console">
                 {visibleEvents.map((ev, idx) => {
