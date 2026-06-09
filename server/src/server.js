@@ -154,8 +154,14 @@ io.on('connection', (socket) => {
 
     const room = rooms[roomId];
 
-    let player = room.players.find(p => p.id === socket.id);
-    if (!player) {
+    let player = room.players.find(p => p.id === socket.id || p.name === playerName);
+    if (player) {
+      player.id = socket.id; // Update socket ID on reconnect
+    } else {
+      if (!room.isSinglePlayer && room.players.length >= 2) {
+        socket.emit('lobby_error', 'Lobby is full (maximum 2 players).');
+        return;
+      }
       player = {
         id: socket.id,
         name: playerName,
@@ -756,6 +762,8 @@ function simulateRound(room) {
       matchNum: 1,
       teamAName: p1.teamName || p1.name,
       teamBName: p2.teamName || p2.name,
+      playerAName: p1.name,
+      playerBName: p2.name,
       teamAStats: {
         totalOvr: p1.stats?.totalOvr || 75,
         tactic: p1.tactic,

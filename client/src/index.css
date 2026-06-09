@@ -1288,6 +1288,119 @@ select.sports-input option {
   z-index: 5;
 }
 
+/* Glowing Neon Pitch Grid */
+.sim-field-grid {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-size: 15px 15px;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  pointer-events: none;
+}
+
+/* Tactical Glowing Player Dots */
+.sim-player-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  transition: all 0.9s cubic-bezier(0.19, 1, 0.22, 1);
+  z-index: 4;
+}
+
+.sim-player-dot.team-a {
+  background: #ffffff;
+  border: 2px solid var(--color-gold, #f1c40f);
+  box-shadow: 0 0 6px rgba(241, 196, 15, 0.8), 0 0 12px rgba(255, 255, 255, 0.5);
+  animation: pulseGlowTeamA 2s infinite ease-in-out;
+}
+
+.sim-player-dot.team-b {
+  background: #111;
+  border: 2px solid #e74c3c;
+  box-shadow: 0 0 6px rgba(231, 76, 60, 0.8), 0 0 12px rgba(231, 76, 60, 0.4);
+  animation: pulseGlowTeamB 2s infinite ease-in-out;
+}
+
+@keyframes pulseGlowTeamA {
+  0%, 100% { box-shadow: 0 0 4px rgba(241, 196, 15, 0.6); }
+  50% { box-shadow: 0 0 10px rgba(241, 196, 15, 1), 0 0 15px rgba(255, 255, 255, 0.8); }
+}
+
+@keyframes pulseGlowTeamB {
+  0%, 100% { box-shadow: 0 0 4px rgba(231, 76, 60, 0.6); }
+  50% { box-shadow: 0 0 10px rgba(231, 76, 60, 1), 0 0 15px rgba(231, 76, 60, 0.6); }
+}
+
+/* Flashing Goalposts */
+.sim-goalpost {
+  position: absolute;
+  top: 35%;
+  width: 4px;
+  height: 30%;
+  background: rgba(255, 255, 255, 0.15);
+  pointer-events: none;
+  transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.sim-goalpost.left {
+  left: 0;
+  border-right: 2px solid rgba(255, 255, 255, 0.5);
+}
+
+.sim-goalpost.right {
+  right: 0;
+  border-left: 2px solid rgba(255, 255, 255, 0.5);
+}
+
+.sim-goalpost.left.flash {
+  animation: flashGoalRed 1.5s ease-in-out;
+}
+
+.sim-goalpost.right.flash {
+  animation: flashGoalGold 1.5s ease-in-out;
+}
+
+@keyframes flashGoalRed {
+  0%, 100% {
+    background: rgba(255, 255, 255, 0.15);
+    box-shadow: none;
+  }
+  50% {
+    background: #e74c3c;
+    box-shadow: 0 0 15px #e74c3c, 0 0 30px #e74c3c;
+  }
+}
+
+@keyframes flashGoalGold {
+  0%, 100% {
+    background: rgba(255, 255, 255, 0.15);
+    box-shadow: none;
+  }
+  50% {
+    background: #f1c40f;
+    box-shadow: 0 0 15px #f1c40f, 0 0 30px #f1c40f;
+  }
+}
+
+/* Opponent Scouting Roster Scrollbox on Mobile */
+.opponent-roster-scroll-container::-webkit-scrollbar {
+  height: 5px;
+}
+.opponent-roster-scroll-container::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+.opponent-roster-scroll-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+.opponent-roster-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+
 .sim-field-alert-overlay {
   position: absolute;
   left: 0; top: 0; width: 100%; height: 100%;

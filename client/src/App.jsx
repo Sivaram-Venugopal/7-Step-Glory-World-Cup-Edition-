@@ -338,7 +338,9 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Bench Swap
-  const [starterSwapIndex, setStarterSwapIndex] = useState(null);
+  const [selectedSwapSlot, setSelectedSwapSlot] = useState(null); // { type: 'squad' | 'sub', index: number }
+  const [showTimeoutPopup, setShowTimeoutPopup] = useState(false);
+  const [countdown, setCountdown] = useState(15);
 
   // Navigation tabs for tournament dashboard
   const [activeDashboardTab, setActiveDashboardTab] = useState("SCOUTING"); // SCOUTING, STANDINGS, STATS
@@ -695,8 +697,16 @@ export default function App() {
   };
 
   const saveMatchToSupabase = async (matchDetails, roomState) => {
-    // Local storage leaderboard fallback
-    const wonCup = roomState.status === 'finished' && matchDetails.matchNum >= 8 && (matchDetails.scoreA > matchDetails.scoreB);
+    // Determine if local player won in multiplayer
+    const isP1 = matchDetails.playerAName === playerName;
+    const isWinner = isP1 
+      ? matchDetails.scoreA > matchDetails.scoreB 
+      : matchDetails.scoreB > matchDetails.scoreA;
+
+    const wonCup = roomState.isSinglePlayer 
+      ? (roomState.status === 'finished' && matchDetails.matchNum >= 8 && (matchDetails.scoreA > matchDetails.scoreB))
+      : (roomState.status === 'finished' && isWinner);
+
     if (wonCup && playerName) {
       try {
         const localLeaderboard = JSON.parse(localStorage.getItem('local_leaderboard_stats') || '{}');
@@ -724,7 +734,6 @@ export default function App() {
 
       if (matchErr) throw matchErr;
 
-      const wonCup = roomState.status === 'finished' && matchDetails.matchNum >= 8 && (matchDetails.scoreA > matchDetails.scoreB);
       const { error: tournErr } = await supabase
         .from('tournaments')
         .update({
@@ -857,13 +866,19 @@ export default function App() {
       const lp = roomState.players.find(p => p.id === s.id);
       setLocalPlayer(lp);
 
-      // Initialize Supabase tournament record if starting tournament
+      // Initialize Supabase tournament record if starting tournament (both players do it for their own profiles)
       if (roomState.status === 'tournament' && roomState.matchesPlayed === 0) {
-        const isHost = lp?.isHost || roomState.players[0]?.id === s.id;
-        if (isHost && !supabaseTournamentId) {
+        if (!supabaseTournamentId) {
           startSupabaseTournament(roomState);
         }
       }
+    });
+
+    s.on('lobby_error', (errorMsg) => {
+      alert(errorMsg);
+      setScreenLoading(false);
+      setRoom(null);
+      setLandingSubmenu("MULTIPLAYER_CHOOSE");
     });
 
     s.on('draft_options', (data) => {
@@ -904,12 +919,8 @@ export default function App() {
       setBallPos({ x: '50%', y: '50%' });
       playSound('whistle');
 
-      // Save match to Supabase (Host only saves the record in multiplayer to prevent double writing!)
-      const lp = roomState.players.find(p => p.id === s.id);
-      const isHost = lp?.isHost || roomState.players[0]?.id === s.id;
-      if (isHost) {
-        saveMatchToSupabase(matchDetails, roomState);
-      }
+      // Save match to Supabase for both players
+      saveMatchToSupabase(matchDetails, roomState);
     });
 
     return () => {
@@ -937,6 +948,41 @@ export default function App() {
       window.removeEventListener('popstate', handlePopState);
     };
   }, [room, socket]);
+
+  const handleForfeitDueToTimeout = () => {
+    if (room && socket) {
+      socket.emit('forfeit_game', { roomId: room.roomId });
+      socket.emit('leave_room', { roomId: room.roomId });
+    }
+    if (socket) {
+      socket.disconnect();
+      socket.connect();
+    }
+    setRoom(null);
+    setDraftData(null);
+    setSimulationActive(false);
+    setSimDetails(null);
+    setSupabaseTournamentId(null);
+    setLandingSubmenu("MAIN");
+    setShowTimeoutPopup(true);
+  };
+
+  useEffect(() => {
+    if (room && !room.isSinglePlayer && room.status === 'tournament' && localPlayer && !localPlayer.ready) {
+      setCountdown(15);
+      const timer = setInterval(() => {
+        setCountdown(prev => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            handleForfeitDueToTimeout();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [room?.status, localPlayer?.ready]);
 
   // Live simulation ticker scroll
   useEffect(() => {
@@ -1218,8 +1264,8 @@ export default function App() {
   // Click on Pitch slot or Bench Sub during draft or swap (38-0-0.com style placement)
   const handleSlotClick = (idx) => {
     if (room.status === 'drafting') {
-      // Draft mode slot selection
       if (selectedCard) {
+        // Draft player into starting XI
         const slotLabel = getPositionLabel(localPlayer.formation, idx);
         if (isPositionCompatible(selectedCard.position, slotLabel) && !localPlayer.squad[idx]) {
           socket.emit('pick_draft_item', { 
@@ -1232,34 +1278,113 @@ export default function App() {
           setDraftData(null);
           setSelectedCard(null);
         }
+      } else {
+        // Swap selection during drafting
+        const player = localPlayer.squad[idx];
+        if (player) {
+          if (!selectedSwapSlot) {
+            setSelectedSwapSlot({ type: 'squad', index: idx });
+          } else if (selectedSwapSlot.type === 'squad') {
+            if (selectedSwapSlot.index === idx) {
+              setSelectedSwapSlot(null);
+            } else {
+              setSelectedSwapSlot({ type: 'squad', index: idx });
+            }
+          } else if (selectedSwapSlot.type === 'sub') {
+            // Swap sub to squad
+            const subPlayer = localPlayer.subs[selectedSwapSlot.index];
+            const slotLabel = getPositionLabel(localPlayer.formation, idx);
+            if (subPlayer && !isPositionCompatible(subPlayer.position, slotLabel)) {
+              return; // Not compatible
+            }
+            socket.emit('swap_player', { roomId, starterIdx: idx, subIdx: selectedSwapSlot.index });
+            setSelectedSwapSlot(null);
+          }
+        } else {
+          // Empty slot click
+          if (selectedSwapSlot && selectedSwapSlot.type === 'sub') {
+            const subPlayer = localPlayer.subs[selectedSwapSlot.index];
+            const slotLabel = getPositionLabel(localPlayer.formation, idx);
+            if (subPlayer && !isPositionCompatible(subPlayer.position, slotLabel)) {
+              return; // Not compatible
+            }
+            socket.emit('swap_player', { roomId, starterIdx: idx, subIdx: selectedSwapSlot.index });
+            setSelectedSwapSlot(null);
+          }
+        }
       }
     } else if (room.status === 'tournament') {
-      // Tournament mode starter-bench swap selection
-      if (starterSwapIndex === idx) {
-        setStarterSwapIndex(null);
-      } else {
-        setStarterSwapIndex(idx);
+      const player = user.squad[idx];
+      if (!selectedSwapSlot) {
+        if (player) setSelectedSwapSlot({ type: 'squad', index: idx });
+      } else if (selectedSwapSlot.type === 'squad') {
+        if (selectedSwapSlot.index === idx) {
+          setSelectedSwapSlot(null);
+        } else {
+          if (player) setSelectedSwapSlot({ type: 'squad', index: idx });
+        }
+      } else if (selectedSwapSlot.type === 'sub') {
+        // Swap sub to squad in tournament
+        socket.emit('swap_player', { roomId, starterIdx: idx, subIdx: selectedSwapSlot.index });
+        setSelectedSwapSlot(null);
       }
     }
   };
 
   const handleSubClick = (subIdx) => {
     if (room.status === 'drafting') {
-      // Draft mode sub slot selection
-      if (selectedCard && room.draftRound >= 12 && !localPlayer.subs[subIdx]) {
-        socket.emit('pick_draft_item', { 
-          roomId, 
-          type: 'player', 
-          item: { ...selectedCard, teamId: (localPlayer?.spunTeams || room.spunTeams)[room.draftRound - 1] }, 
-          slotType: 'sub', 
-          slotIndex: subIdx 
-        });
-        setDraftData(null);
-        setSelectedCard(null);
+      if (selectedCard) {
+        // Draft player to sub bench (allowed at any round now!)
+        if (!localPlayer.subs[subIdx]) {
+          socket.emit('pick_draft_item', { 
+            roomId, 
+            type: 'player', 
+            item: { ...selectedCard, teamId: (localPlayer?.spunTeams || room.spunTeams)[room.draftRound - 1] }, 
+            slotType: 'sub', 
+            slotIndex: subIdx 
+          });
+          setDraftData(null);
+          setSelectedCard(null);
+        }
+      } else {
+        // Swap selection during drafting
+        const player = localPlayer.subs[subIdx];
+        if (!selectedSwapSlot) {
+          if (player) setSelectedSwapSlot({ type: 'sub', index: subIdx });
+        } else if (selectedSwapSlot.type === 'sub') {
+          if (selectedSwapSlot.index === subIdx) {
+            setSelectedSwapSlot(null);
+          } else {
+            if (player) setSelectedSwapSlot({ type: 'sub', index: subIdx });
+          }
+        } else if (selectedSwapSlot.type === 'squad') {
+          // Swap squad to sub
+          const subPlayer = localPlayer.subs[subIdx];
+          if (subPlayer) {
+            const slotLabel = getPositionLabel(localPlayer.formation, selectedSwapSlot.index);
+            if (!isPositionCompatible(subPlayer.position, slotLabel)) {
+              return; // Not compatible
+            }
+          }
+          socket.emit('swap_player', { roomId, starterIdx: selectedSwapSlot.index, subIdx });
+          setSelectedSwapSlot(null);
+        }
       }
-    } else if (room.status === 'tournament' && starterSwapIndex !== null) {
-      socket.emit('swap_player', { roomId, starterIdx: starterSwapIndex, subIdx });
-      setStarterSwapIndex(null);
+    } else if (room.status === 'tournament') {
+      const player = user.subs[subIdx];
+      if (!selectedSwapSlot) {
+        if (player) setSelectedSwapSlot({ type: 'sub', index: subIdx });
+      } else if (selectedSwapSlot.type === 'sub') {
+        if (selectedSwapSlot.index === subIdx) {
+          setSelectedSwapSlot(null);
+        } else {
+          if (player) setSelectedSwapSlot({ type: 'sub', index: subIdx });
+        }
+      } else if (selectedSwapSlot.type === 'squad') {
+        // Swap squad to sub in tournament
+        socket.emit('swap_player', { roomId, starterIdx: selectedSwapSlot.index, subIdx });
+        setSelectedSwapSlot(null);
+      }
     }
   };
 
@@ -1355,6 +1480,43 @@ export default function App() {
               {isMultiplayerActive ? 'Forfeit & Exit' : 'Exit'}
             </button>
           </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderTimeoutPopupModal = () => {
+    if (!showTimeoutPopup) return null;
+    return (
+      <div className="retro-popup-overlay" style={{
+        position: 'fixed',
+        top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.85)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 99999,
+        padding: '20px'
+      }}>
+        <div className="exit-confirm-panel text-center" style={{ borderColor: '#c0392b' }}>
+          <div className="flex justify-center" style={{ color: '#c0392b' }}>
+            <AlertCircle size={36} className="animate-bounce" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="logo-heading" style={{ fontSize: '1.25rem', color: '#c0392b' }}>
+              MATCH FORFEITED
+            </h3>
+            <p className="text-xs" style={{ color: 'var(--color-text-dim)', lineHeight: '1.3' }}>
+              You failed to click 'Kick Off Match' within 15 seconds. You have forfeited the match with a 3-0 loss.
+            </p>
+          </div>
+          <button 
+            onClick={() => setShowTimeoutPopup(false)}
+            className="btn-sports w-full"
+            style={{ fontSize: '0.72rem', padding: '8px', background: '#c0392b', color: '#ffffff', border: 'none', marginTop: '12px' }}
+          >
+            Acknowledge
+          </button>
         </div>
       </div>
     );
@@ -1917,6 +2079,7 @@ export default function App() {
         </div>
       </div>
       {renderExitConfirmModal()}
+      {renderTimeoutPopupModal()}
       </>
     );
   }
@@ -2111,15 +2274,19 @@ export default function App() {
                                    !draftedPlayer && 
                                    isPositionCompatible(selectedCard.position, slotLabel);
 
+              const isSelectedForSwap = selectedSwapSlot && 
+                                        selectedSwapSlot.type === 'squad' && 
+                                        selectedSwapSlot.index === idx;
+
               return (
                 <div 
                   key={idx} 
                   onClick={() => handleSlotClick(idx)}
-                  className={`pitch-node ${draftedPlayer ? 'filled' : ''} ${isCompatible ? 'active-draft' : ''}`}
+                  className={`pitch-node ${draftedPlayer ? 'filled' : ''} ${isCompatible || isSelectedForSwap ? 'active-draft' : ''}`}
                   style={{ 
                     top: pos.top, 
                     left: pos.left,
-                    cursor: isCompatible ? 'pointer' : draftedPlayer ? 'default' : 'not-allowed',
+                    cursor: isCompatible ? 'pointer' : draftedPlayer ? 'pointer' : 'not-allowed',
                     opacity: selectedCard && !isCompatible && !draftedPlayer ? 0.35 : 1,
                     background: draftedPlayer ? 'transparent' : undefined,
                     border: draftedPlayer ? 'none' : undefined,
@@ -2145,7 +2312,7 @@ export default function App() {
             })}
           </div>
 
-          {/* Subs Bench Slots (Flashes when a card is selected) */}
+          {/* Subs Bench Slots (Flashes when a card is selected or selected for swap) */}
           {localPlayer && (
             <div className="mt-4 pt-4 border-t">
               <p className="text-xs uppercase font-bold mb-2 text-center" style={{ color: 'var(--color-text-dim)' }}>Substitute Bench</p>
@@ -2153,17 +2320,20 @@ export default function App() {
                 {Array.from({ length: 3 }).map((_, subIdx) => {
                   const player = localPlayer.subs[subIdx];
                   const isCompatibleSub = selectedCard && !player;
+                  const isSelectedSub = selectedSwapSlot && 
+                                        selectedSwapSlot.type === 'sub' && 
+                                        selectedSwapSlot.index === subIdx;
                   return (
                     <div 
                       key={subIdx}
                       onClick={() => handleSubClick(subIdx)}
-                      className={`p-2 rounded-lg text-center ${player ? 'filled' : ''} ${isCompatibleSub ? 'active-draft-sub active-draft' : ''}`}
+                      className={`p-2 rounded-lg text-center ${player ? 'filled' : ''} ${isCompatibleSub || isSelectedSub ? 'active-draft-sub active-draft' : ''}`}
                       style={{ 
                         width: '90px', 
                         background: '#000', 
-                        border: isCompatibleSub ? '2px solid #fff' : player ? '1px solid var(--color-gold)' : '1px dotted rgba(46,204,113,0.3)',
+                        border: isCompatibleSub || isSelectedSub ? '2px solid #fff' : player ? '1px solid var(--color-gold)' : '1px dotted rgba(46,204,113,0.3)',
                         fontSize: '0.65rem',
-                        cursor: isCompatibleSub ? 'pointer' : 'default',
+                        cursor: isCompatibleSub || player ? 'pointer' : 'default',
                         opacity: selectedCard && !isCompatibleSub && !player ? 0.35 : 1,
                         position: 'relative',
                         display: 'flex',
@@ -2214,6 +2384,7 @@ export default function App() {
         </div>
       </div>
       {renderExitConfirmModal()}
+      {renderTimeoutPopupModal()}
       </>
     );
   }
@@ -2226,7 +2397,9 @@ export default function App() {
       : (room.currentOpponent || { name: "AI Opponent", stats: { totalOvr: 60, att: 60, mid: 60, def: 60 } });
     
     const hasFinished = room.status === 'finished';
-    const isP1 = room.players[0]?.id === socket?.id;
+    const isP1 = lastMatch && lastMatch.playerAName 
+      ? lastMatch.playerAName === user.name 
+      : room.players[0]?.id === socket?.id;
     const lastMatch = room.matchesHistory[room.matchesHistory.length - 1];
     const wonCup = hasFinished && (
       room.isSinglePlayer 
@@ -2252,14 +2425,14 @@ export default function App() {
               </p>
               <h2 className="logo-heading" style={{ fontSize: '1.6rem' }}>
                 {hasFinished 
-                  ? (wonCup ? "🏆 CHAMPION!" : "💀 DEFEATED") 
+                  ? (wonCup ? (room.isSinglePlayer ? "🏆 CHAMPION!" : "🏆 VICTORY!") : "💀 DEFEATED") 
                   : (room.isSinglePlayer 
                       ? `STAGE RUN: MATCH ${room.matchesPlayed + 1} OF 8` 
                       : "CHALLENGE MATCH: 1-GAME FINAL")
                 }
               </h2>
               <p className="text-xs font-bold" style={{ color: 'var(--color-gold)', marginTop: '4px' }}>
-                {hasFinished ? (wonCup ? "YOU CLAIMED SUPREME GLORY!" : "YOU LOST THE DUEL") : (
+                {hasFinished ? (wonCup ? (room.isSinglePlayer ? "YOU CLAIMED SUPREME GLORY!" : "YOU WON THE DUEL!") : "YOU LOST THE DUEL") : (
                   room.isSinglePlayer ? (
                     room.matchesPlayed < 3 
                       ? `GROUP STAGE MATCH - GROUP A`
@@ -2354,7 +2527,14 @@ export default function App() {
               {!hasFinished && (
                 <div className="pt-4 border-t">
                   {!user.ready ? (
-                    <button onClick={handleReadyMatch} className="btn-sports w-full">Kick Off Match</button>
+                    <button onClick={handleReadyMatch} className="btn-sports w-full flex justify-between items-center px-4">
+                      <span>Kick Off Match</span>
+                      {!room.isSinglePlayer && (
+                        <span className="font-mono bg-red-600/20 text-red-500 border border-red-500/30 px-2 py-0.5 rounded text-[10px] animate-pulse">
+                          [ 00:{countdown < 10 ? '0' + countdown : countdown} ]
+                        </span>
+                      )}
+                    </button>
                   ) : (
                     <div className="alert-box text-sm">AWAITING OPPONENT READY...</div>
                   )}
@@ -2372,9 +2552,9 @@ export default function App() {
             <div className="dashboard-panel flex flex-col gap-4">
               <h3 className="text-sm uppercase font-bold border-b pb-2 text-center">Active Starting XI</h3>
               
-              {starterSwapIndex !== null && (
+              {selectedSwapSlot !== null && (
                 <div className="alert-box alert-box-amber text-xs">
-                  SWAP MODE: Select a sub on the bench below to swap with your selected starter.
+                  SWAP MODE: Select a slot in the other section (bench/starting XI) to swap.
                 </div>
               )}
 
@@ -2387,7 +2567,7 @@ export default function App() {
                 
                 {getPlayerPositions(user.formation).map((pos, idx) => {
                   const player = user.squad[idx];
-                  const isSelectedForSwap = starterSwapIndex === idx;
+                  const isSelectedForSwap = selectedSwapSlot && selectedSwapSlot.type === 'squad' && selectedSwapSlot.index === idx;
 
                   return (
                     <div 
@@ -2422,19 +2602,20 @@ export default function App() {
               </div>
 
               <div className="pt-4 border-t">
-                <p className="text-xs uppercase font-bold mb-2 text-center" style={{ color: 'var(--color-text-dim)' }}>Substitute Bench (Click starter, then click bench to swap)</p>
+                <p className="text-xs uppercase font-bold mb-2 text-center" style={{ color: 'var(--color-text-dim)' }}>Substitute Bench (Click slot in other section to swap)</p>
                 <div className="flex gap-4 justify-center">
                   {Array.from({ length: 3 }).map((_, subIdx) => {
                     const player = user.subs[subIdx];
+                    const isSelectedSub = selectedSwapSlot && selectedSwapSlot.type === 'sub' && selectedSwapSlot.index === subIdx;
                     return (
                       <div 
                         key={subIdx}
                         onClick={() => handleSubClick(subIdx)}
-                        className={`p-2 rounded-lg text-center ${player ? 'filled' : ''}`}
+                        className={`p-2 rounded-lg text-center ${player ? 'filled' : ''} ${isSelectedSub ? 'active-draft' : ''}`}
                         style={{ 
                           width: '95px', 
                           background: '#000', 
-                          border: '1px solid var(--color-gold)',
+                          border: isSelectedSub ? '2px solid #fff' : player ? '1px solid var(--color-gold)' : '1px dotted rgba(46,204,113,0.3)',
                           fontSize: '0.68rem',
                           cursor: 'pointer',
                           position: 'relative',
@@ -2770,7 +2951,20 @@ export default function App() {
 
               <div>
                 <p className="text-xs uppercase font-bold mb-2">Active Opponent Squad Roster</p>
-                <div className="flex gap-2" style={{ flexWrap: 'wrap', justifyContent: 'center' }}>
+                <div 
+                  className="flex gap-2 opponent-roster-scroll-container" 
+                  style={{ 
+                    overflowX: 'auto', 
+                    whiteSpace: 'nowrap', 
+                    padding: '8px 4px', 
+                    background: 'rgba(0, 0, 0, 0.3)', 
+                    border: '1px solid rgba(255, 255, 255, 0.05)', 
+                    borderRadius: '8px', 
+                    width: '100%',
+                    justifyContent: 'flex-start',
+                    alignItems: 'center'
+                  }}
+                >
                   {opponent.squad && Object.values(opponent.squad).filter(Boolean).map((p, idx) => {
                     let cardTier = "gold";
                     if (p.rating < 72) cardTier = "bronze";
@@ -2787,6 +2981,7 @@ export default function App() {
                           display: 'flex',
                           flexDirection: 'column',
                           alignItems: 'center',
+                          flexShrink: 0,
                           justifyContent: 'space-between',
                           boxShadow: '0 4px 8px rgba(0,0,0,0.4)',
                           cursor: 'default',
@@ -2864,17 +3059,50 @@ export default function App() {
               {/* 3D Field Visualizer */}
               <div className="sim-field-container">
                 <div className="sim-field-pitch">
+                  <div className="sim-field-grid"></div>
                   <div className="sim-field-center-line"></div>
                   <div className="sim-field-center-circle"></div>
                   <div className="sim-field-penalty-left"></div>
                   <div className="sim-field-penalty-right"></div>
                   
+                  {/* Flashing Goalposts */}
+                  <div className={`sim-goalpost left ${alertMessage && alertMessage.toLowerCase().includes('against') ? 'flash' : ''}`}></div>
+                  <div className={`sim-goalpost right ${alertMessage && alertMessage.toLowerCase().includes('you') ? 'flash' : ''}`}></div>
+
+                  {/* Dynamic Tactical Players */}
+                  {(() => {
+                    const bx = parseFloat(ballPos.x) || 50;
+                    const by = parseFloat(ballPos.y) || 50;
+                    
+                    // Team A (Gold/White core)
+                    const p1Att = { x: `${52 + bx * 0.35}%`, y: `${by * 0.7 + 15}%` };
+                    const p1Mid = { x: `${30 + bx * 0.25}%`, y: `${40 + (by - 50) * 0.4}%` };
+                    const p1Def = { x: `${10 + bx * 0.15}%`, y: `${30 + (by - 50) * 0.2}%` };
+
+                    // Team B (Crimson/Dark core)
+                    const p2Att = { x: `${48 - (100 - bx) * 0.35}%`, y: `${by * 0.7 + 15}%` };
+                    const p2Mid = { x: `${70 - (100 - bx) * 0.25}%`, y: `${60 - (50 - by) * 0.4}%` };
+                    const p2Def = { x: `${90 - (100 - bx) * 0.15}%`, y: `${70 - (50 - by) * 0.2}%` };
+
+                    return (
+                      <>
+                        <div className="sim-player-dot team-a" style={{ left: p1Att.x, top: p1Att.y }} title="Striker"></div>
+                        <div className="sim-player-dot team-a" style={{ left: p1Mid.x, top: p1Mid.y }} title="Midfielder"></div>
+                        <div className="sim-player-dot team-a" style={{ left: p1Def.x, top: p1Def.y }} title="Defender"></div>
+
+                        <div className="sim-player-dot team-b" style={{ left: p2Att.x, top: p2Att.y }} title="Striker"></div>
+                        <div className="sim-player-dot team-b" style={{ left: p2Mid.x, top: p2Mid.y }} title="Midfielder"></div>
+                        <div className="sim-player-dot team-b" style={{ left: p2Def.x, top: p2Def.y }} title="Defender"></div>
+                      </>
+                    );
+                  })()}
+
                   {/* Ball element animated via top/left inline styles */}
                   <div 
                     className="sim-field-ball"
                     style={{ left: ballPos.x, top: ballPos.y }}
                   ></div>
-
+ 
                   {/* Broadcast Alert Text overlay */}
                   {alertMessage && (
                     <div className="sim-field-alert-overlay">
@@ -2944,6 +3172,7 @@ export default function App() {
         )}
       </div>
       {renderExitConfirmModal()}
+      {renderTimeoutPopupModal()}
       {screenLoading && (
         <div className="screen-transition-overlay">
           <div className="screen-transition-content">
