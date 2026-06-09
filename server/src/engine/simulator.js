@@ -205,7 +205,7 @@ export function calculateTeamStats(squad, formation, tactic, managerObj) {
 /**
  * Simulates a football match including red cards, yellow cards, goals, saves, and on-the-fly stat drops.
  */
-export function simulateMatch(teamA, teamB, isKnockout = false) {
+export function simulateMatch(teamA, teamB, isKnockout = false, interactiveShootout = false) {
   const statsA = { ...teamA.stats };
   const statsB = { ...teamB.stats };
 
@@ -360,13 +360,18 @@ export function simulateMatch(teamA, teamB, isKnockout = false) {
   let cleanSheetGK_A = scoreB === 0 ? getRandomPlayer(playerStatsA, "GK")?.name : null;
   let cleanSheetGK_B = scoreA === 0 ? getRandomPlayer(playerStatsB, "GK")?.name : null;
 
+  let needsShootout = false;
   if (isKnockout && scoreA === scoreB) {
-    const shootoutRes = simulatePenaltyShootout(playerStatsA, playerStatsB, teamA.name, teamB.name);
-    events.push(...shootoutRes.events);
-    if (shootoutRes.scoreA > shootoutRes.scoreB) {
-      scoreA += 1;
+    if (interactiveShootout) {
+      needsShootout = true;
     } else {
-      scoreB += 1;
+      const shootoutRes = simulatePenaltyShootout(playerStatsA, playerStatsB, teamA.name, teamB.name);
+      events.push(...shootoutRes.events);
+      if (shootoutRes.scoreA > shootoutRes.scoreB) {
+        scoreA += 1;
+      } else {
+        scoreB += 1;
+      }
     }
   }
 
@@ -374,6 +379,7 @@ export function simulateMatch(teamA, teamB, isKnockout = false) {
     scoreA,
     scoreB,
     events,
+    needsShootout,
     scorers: scorersList,
     assists: assistsList,
     cleanSheets: { A: cleanSheetGK_A, B: cleanSheetGK_B }
@@ -539,7 +545,7 @@ function simulatePenaltyShootout(playerListA, playerListB, teamAName, teamBName)
   return { scoreA, scoreB, events };
 }
 
-function canResolveShootout(scoreA, scoreB, kicksA, kicksB, suddenDeath) {
+export function canResolveShootout(scoreA, scoreB, kicksA, kicksB, suddenDeath) {
   if (suddenDeath) {
     return kicksA === kicksB && scoreA !== scoreB;
   }

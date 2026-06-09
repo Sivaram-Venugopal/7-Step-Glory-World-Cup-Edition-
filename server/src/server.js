@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { historicalTeams, managers } from './data/players.js';
-import { calculateTeamStats, simulateMatch, generateAISquad, generateNationSquad } from './engine/simulator.js';
+import { calculateTeamStats, simulateMatch, generateAISquad, generateNationSquad, getPenaltyGoalCommentary, getPenaltyMissCommentary, canResolveShootout } from './engine/simulator.js';
 
 // Resolve directory name and load env configuration
 const __filename = fileURLToPath(import.meta.url);
@@ -318,6 +318,39 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Submit interactive shootout choice
+  socket.on('submit_shootout_choice', ({ roomId, choice }) => {
+    const room = rooms[roomId];
+    if (!room || room.status !== 'shootout' || !room.shootout) return;
+
+    const player = room.players.find(p => p.id === socket.id);
+    if (!player) return;
+
+    const shootout = room.shootout;
+    if (socket.id === shootout.strikerId) {
+      shootout.choices.striker = choice;
+    } else if (socket.id === shootout.keeperId) {
+      shootout.choices.keeper = choice;
+    }
+
+    // If single player, automatically generate AI choice immediately
+    if (room.isSinglePlayer) {
+      const aiChoice = Math.floor(Math.random() * 9) + 1;
+      if (shootout.strikerId === 'ai') {
+        shootout.choices.striker = aiChoice;
+      } else {
+        shootout.choices.keeper = aiChoice;
+      }
+    }
+
+    // Check if both choices are submitted
+    if (shootout.choices.striker !== undefined && shootout.choices.keeper !== undefined) {
+      resolveShootoutKick(room);
+    } else {
+      io.to(roomId).emit('room_update', getSanitizedRoom(room));
+    }
+  });
+
   // Reset lobby
   socket.on('restart_game', ({ roomId }) => {
     const room = rooms[roomId];
@@ -369,7 +402,7 @@ io.on('connection', (socket) => {
           delete rooms[roomId];
           console.log(`Lobby ${roomId} closed.`);
         } else {
-          if ((room.status === 'drafting' || room.status === 'tournament') && !room.isSinglePlayer) {
+          if ((room.status === 'drafting' || room.status === 'tournament' || room.status === 'shootout') && !room.isSinglePlayer) {
             const remainingPlayer = room.players[0];
             const forfeitMatch = {
               matchNum: room.matchesPlayed + 1,
@@ -472,7 +505,7 @@ io.on('connection', (socket) => {
           console.log(`Lobby ${roomId} closed.`);
         } else {
           // If the match was in progress, trigger default win for the remaining player
-          if ((room.status === 'drafting' || room.status === 'tournament') && !room.isSinglePlayer) {
+          if ((room.status === 'drafting' || room.status === 'tournament' || room.status === 'shootout') && !room.isSinglePlayer) {
             const remainingPlayer = room.players[0];
             const forfeitMatch = {
               matchNum: room.matchesPlayed + 1,
@@ -678,72 +711,100 @@ function simulateRound(room) {
       matchRes = simulateMatch(
         { name: user.teamName || user.name, squad: user.squad, tactic: user.tactic, stats: user.stats },
         { name: opponent.name, squad: opponent.squad, tactic: opponent.tactic, stats: opponent.stats },
-        true
+        true,
+        true // interactiveShootout
       );
 
-      // Track Player stats
-      updateStatsTracker(room, matchRes, user.squad, opponent.squad);
+      const matchDetails = {
+        matchNum: room.matchesPlayed,
+        teamAName: user.teamName || user.name,
+        teamBName: opponent.name,
+        teamAStats: {
+          totalOvr: user.stats?.totalOvr || 75,
+          tactic: user.tactic,
+          formation: user.formation
+        },
+        teamBStats: {
+          totalOvr: opponent.stats?.totalOvr || 75,
+          tactic: opponent.tactic,
+          formation: opponent.formation
+        },
+        scoreA: matchRes.scoreA,
+        scoreB: matchRes.scoreB,
+        events: matchRes.events,
+        opponentSquad: opponent.squad,
+        opponentManager: opponent.manager,
+        opponentStats: opponent.stats
+      };
 
-      // Simulate other knockout matches in background to keep stats running
-      let numBgMatches = 0;
-      if (room.matchesPlayed === 4) numBgMatches = 7;
-      else if (room.matchesPlayed === 5) numBgMatches = 3;
-      else if (room.matchesPlayed === 6) numBgMatches = 1;
-      else if (room.matchesPlayed === 7) numBgMatches = 1;
-
-      for (let j = 0; j < numBgMatches; j++) {
-        const t1 = historicalTeams[Math.floor(Math.random() * historicalTeams.length)];
-        let t2 = historicalTeams[Math.floor(Math.random() * historicalTeams.length)];
-        while (t1.id === t2.id) {
-          t2 = historicalTeams[Math.floor(Math.random() * historicalTeams.length)];
-        }
-        const squad1 = generateAISquad(t1.id);
-        const squad2 = generateAISquad(t2.id);
-        const bgRes = simulateMatch(squad1, squad2, true);
-        updateStatsTracker(room, bgRes, squad1.squad, squad2.squad);
-      }
-
-      if (matchRes.scoreB > matchRes.scoreA) {
-        room.status = 'finished'; // Lost knockout match
+      if (matchRes.needsShootout) {
+        // Initialize interactive shootout!
+        room.status = 'shootout';
+        room.activeMatchDetails = matchDetails;
+        room.shootout = {
+          kicksA: 0,
+          kicksB: 0,
+          scoreA: 0,
+          scoreB: 0,
+          round: 1,
+          suddenDeath: false,
+          strikerId: user.id,
+          keeperId: 'ai',
+          teamAName: user.teamName || user.name,
+          teamBName: opponent.name,
+          choices: {},
+          events: [
+            {
+              time: 120,
+              type: "whistle",
+              text: `🚨 PENALTY SHOOTOUT! The match must be decided from the spot! ${user.teamName || user.name} vs ${opponent.name}!`
+            }
+          ]
+        };
+        room.players.forEach(p => { p.ready = false; });
+        io.to(room.roomId).emit('room_update', getSanitizedRoom(room));
       } else {
-        if (room.matchesPlayed >= 8) {
-          room.status = 'finished'; // Won World Cup Final!
-        } else {
-          const randomOpp = historicalTeams[Math.floor(Math.random() * historicalTeams.length)];
-          room.currentOpponent = generateAISquad(randomOpp.id);
+        // No shootout needed, regular outcome
+        updateStatsTracker(room, matchRes, user.squad, opponent.squad);
+
+        // Simulate other knockout matches in background to keep stats running
+        let numBgMatches = 0;
+        if (room.matchesPlayed === 4) numBgMatches = 7;
+        else if (room.matchesPlayed === 5) numBgMatches = 3;
+        else if (room.matchesPlayed === 6) numBgMatches = 1;
+        else if (room.matchesPlayed === 7) numBgMatches = 1;
+
+        for (let j = 0; j < numBgMatches; j++) {
+          const t1 = historicalTeams[Math.floor(Math.random() * historicalTeams.length)];
+          let t2 = historicalTeams[Math.floor(Math.random() * historicalTeams.length)];
+          while (t1.id === t2.id) {
+            t2 = historicalTeams[Math.floor(Math.random() * historicalTeams.length)];
+          }
+          const squad1 = generateAISquad(t1.id);
+          const squad2 = generateAISquad(t2.id);
+          const bgRes = simulateMatch(squad1, squad2, true);
+          updateStatsTracker(room, bgRes, squad1.squad, squad2.squad);
         }
+
+        if (matchRes.scoreB > matchRes.scoreA) {
+          room.status = 'finished'; // Lost knockout match
+        } else {
+          if (room.matchesPlayed >= 8) {
+            room.status = 'finished'; // Won World Cup Final!
+          } else {
+            const randomOpp = historicalTeams[Math.floor(Math.random() * historicalTeams.length)];
+            room.currentOpponent = generateAISquad(randomOpp.id);
+          }
+        }
+
+        room.matchesHistory.push(matchDetails);
+        room.players.forEach(p => { p.ready = false; });
+        io.to(room.roomId).emit('match_simulated', {
+          matchDetails,
+          roomState: getSanitizedRoom(room)
+        });
       }
     }
-
-    const matchDetails = {
-      matchNum: room.matchesPlayed,
-      teamAName: user.teamName || user.name,
-      teamBName: opponent.name,
-      teamAStats: {
-        totalOvr: user.stats?.totalOvr || 75,
-        tactic: user.tactic,
-        formation: user.formation
-      },
-      teamBStats: {
-        totalOvr: opponent.stats?.totalOvr || 75,
-        tactic: opponent.tactic,
-        formation: opponent.formation
-      },
-      scoreA: matchRes.scoreA,
-      scoreB: matchRes.scoreB,
-      events: matchRes.events,
-      opponentSquad: opponent.squad,
-      opponentManager: opponent.manager,
-      opponentStats: opponent.stats
-    };
-    room.matchesHistory.push(matchDetails);
-
-    room.players.forEach(p => { p.ready = false; });
-
-    io.to(room.roomId).emit('match_simulated', {
-      matchDetails,
-      roomState: getSanitizedRoom(room)
-    });
   } else {
     // Multiplayer duel simulation (Exactly one game format)
     const p1 = room.players[0];
@@ -753,10 +814,9 @@ function simulateRound(room) {
     const matchRes = simulateMatch(
       { name: p1.teamName || p1.name, squad: p1.squad, tactic: p1.tactic, stats: p1.stats },
       { name: p2.teamName || p2.name, squad: p2.squad, tactic: p2.tactic, stats: p2.stats },
-      true
+      true,
+      true // interactiveShootout
     );
-
-    updateStatsTracker(room, matchRes, p1.squad, p2.squad);
 
     const matchDetails = {
       matchNum: 1,
@@ -781,17 +841,43 @@ function simulateRound(room) {
       opponentManager: p2.manager,
       opponentStats: p2.stats
     };
-    room.matchesHistory.push(matchDetails);
 
-    room.players.forEach(p => { p.ready = false; });
-
-    // One game format -> immediately finished!
-    room.status = 'finished';
-
-    io.to(room.roomId).emit('match_simulated', {
-      matchDetails,
-      roomState: getSanitizedRoom(room)
-    });
+    if (matchRes.needsShootout) {
+      // Initialize interactive shootout!
+      room.status = 'shootout';
+      room.activeMatchDetails = matchDetails;
+      room.shootout = {
+        kicksA: 0,
+        kicksB: 0,
+        scoreA: 0,
+        scoreB: 0,
+        round: 1,
+        suddenDeath: false,
+        strikerId: p1.id,
+        keeperId: p2.id,
+        teamAName: p1.teamName || p1.name,
+        teamBName: p2.teamName || p2.name,
+        choices: {},
+        events: [
+          {
+            time: 120,
+            type: "whistle",
+            text: `🚨 PENALTY SHOOTOUT! The match must be decided from the spot! ${p1.teamName || p1.name} vs ${p2.teamName || p2.name}!`
+          }
+        ]
+      };
+      room.players.forEach(p => { p.ready = false; });
+      io.to(room.roomId).emit('room_update', getSanitizedRoom(room));
+    } else {
+      updateStatsTracker(room, matchRes, p1.squad, p2.squad);
+      room.matchesHistory.push(matchDetails);
+      room.players.forEach(p => { p.ready = false; });
+      room.status = 'finished';
+      io.to(room.roomId).emit('match_simulated', {
+        matchDetails,
+        roomState: getSanitizedRoom(room)
+      });
+    }
   }
 }
 
@@ -929,8 +1015,184 @@ function getSanitizedRoom(room) {
       ready: p.ready,
       draftedNames: p.draftedNames,
       spunTeams: p.spunTeams
-    }))
+    })),
+    shootout: room.shootout ? {
+      kicksA: room.shootout.kicksA,
+      kicksB: room.shootout.kicksB,
+      scoreA: room.shootout.scoreA,
+      scoreB: room.shootout.scoreB,
+      round: room.shootout.round,
+      suddenDeath: room.shootout.suddenDeath,
+      strikerId: room.shootout.strikerId,
+      keeperId: room.shootout.keeperId,
+      teamAName: room.shootout.teamAName,
+      teamBName: room.shootout.teamBName,
+      events: room.shootout.events,
+      hasSubmittedStriker: room.shootout.choices.striker !== undefined,
+      hasSubmittedKeeper: room.shootout.choices.keeper !== undefined
+    } : null
   };
+}
+
+function resolveShootoutKick(room) {
+  const shootout = room.shootout;
+  const strikerChoice = shootout.choices.striker;
+  const keeperChoice = shootout.choices.keeper;
+
+  const p1 = room.players[0];
+  const p2 = room.isSinglePlayer ? { name: room.currentOpponent.name, squad: room.currentOpponent.squad } : room.players[1];
+
+  const strikerName = shootout.strikerId === p1.id ? p1.name : p2.name;
+  const keeperName = shootout.keeperId === p1.id ? p1.name : p2.name;
+  const strikerTeam = shootout.strikerId === p1.id ? shootout.teamAName : shootout.teamBName;
+
+  // Football Logic:
+  // If goalkeeper dived in the same direction, it is a SAVE!
+  const saved = strikerChoice === keeperChoice;
+  
+  // 5% chance of miss (hitting post or shooting wide)
+  const missed = !saved && Math.random() < 0.05;
+
+  const scored = !saved && !missed;
+
+  const directionLabels = {
+    1: "Top Left", 2: "Top Center", 3: "Top Right",
+    4: "Mid Left", 5: "Center", 6: "Mid Right",
+    7: "Bottom Left", 8: "Bottom Center", 9: "Bottom Right"
+  };
+
+  const shotDirText = directionLabels[strikerChoice] || "Center";
+  const diveDirText = directionLabels[keeperChoice] || "Center";
+
+  let resultText = "";
+  if (scored) {
+    resultText = `⚽ GOAL! Clean strike into the ${shotDirText}! (Keeper dived ${diveDirText})`;
+  } else if (saved) {
+    resultText = `🧤 SAVED! Outstanding stop by the keeper in the ${diveDirText}!`;
+  } else {
+    resultText = `❌ MISSED! The shot sailed wide of the ${shotDirText}!`;
+  }
+
+  const kickEvent = {
+    time: 120 + (shootout.kicksA + shootout.kicksB),
+    type: scored ? "goal" : "miss",
+    text: `🎯 [Penalty Shootout - Round ${shootout.round}] ${strikerName} (${strikerTeam}) shoots ${shotDirText}... ${resultText}`
+  };
+
+  shootout.events.push(kickEvent);
+
+  // Update scores and kicks
+  if (shootout.strikerId === p1.id) {
+    shootout.kicksA++;
+    if (scored) shootout.scoreA++;
+  } else {
+    shootout.kicksB++;
+    if (scored) shootout.scoreB++;
+  }
+
+  // Update history events list in the active match details
+  room.activeMatchDetails.events.push(kickEvent);
+
+  // Check if shootout resolved
+  const resolved = canResolveShootout(
+    shootout.scoreA,
+    shootout.scoreB,
+    shootout.kicksA,
+    shootout.kicksB,
+    shootout.suddenDeath
+  );
+
+  // Reset choices
+  shootout.choices = {};
+
+  if (resolved) {
+    // Add final whistle event
+    const finalEvent = {
+      time: 130,
+      type: "whistle",
+      text: `🏆 Shootout Finished! Final Penalty Score: ${shootout.teamAName} ${shootout.scoreA} - ${shootout.scoreB} ${shootout.teamBName}.`
+    };
+    shootout.events.push(finalEvent);
+    room.activeMatchDetails.events.push(finalEvent);
+
+    // Save actual match outcome
+    room.activeMatchDetails.scoreA += (shootout.scoreA > shootout.scoreB ? 1 : 0);
+    room.activeMatchDetails.scoreB += (shootout.scoreB > shootout.scoreA ? 1 : 0);
+    
+    // Add shootout stats to match details for reference
+    room.activeMatchDetails.shootoutScoreA = shootout.scoreA;
+    room.activeMatchDetails.shootoutScoreB = shootout.scoreB;
+
+    // Push matchDetails to history
+    room.matchesHistory.push(room.activeMatchDetails);
+
+    room.players.forEach(p => { p.ready = false; });
+
+    // Transition to appropriate status
+    if (room.isSinglePlayer) {
+      // Track stats for completed single player match (with shootout outcome)
+      updateStatsTracker(room, room.activeMatchDetails, p1.squad, p2.squad);
+
+      // Simulate background matches
+      let numBgMatches = 0;
+      if (room.matchesPlayed === 4) numBgMatches = 7;
+      else if (room.matchesPlayed === 5) numBgMatches = 3;
+      else if (room.matchesPlayed === 6) numBgMatches = 1;
+      else if (room.matchesPlayed === 7) numBgMatches = 1;
+
+      for (let j = 0; j < numBgMatches; j++) {
+        const t1 = historicalTeams[Math.floor(Math.random() * historicalTeams.length)];
+        let t2 = historicalTeams[Math.floor(Math.random() * historicalTeams.length)];
+        while (t1.id === t2.id) {
+          t2 = historicalTeams[Math.floor(Math.random() * historicalTeams.length)];
+        }
+        const squad1 = generateAISquad(t1.id);
+        const squad2 = generateAISquad(t2.id);
+        const bgRes = simulateMatch(squad1, squad2, true);
+        updateStatsTracker(room, bgRes, squad1.squad, squad2.squad);
+      }
+
+      if (room.activeMatchDetails.scoreB > room.activeMatchDetails.scoreA) {
+        room.status = 'finished'; // User lost
+      } else {
+        if (room.matchesPlayed >= 8) {
+          room.status = 'finished'; // Won World Cup Final!
+        } else {
+          const randomOpp = historicalTeams[Math.floor(Math.random() * historicalTeams.length)];
+          room.currentOpponent = generateAISquad(randomOpp.id);
+          room.status = 'tournament';
+        }
+      }
+    } else {
+      updateStatsTracker(room, room.activeMatchDetails, p1.squad, p2.squad);
+      room.status = 'finished'; // Multiplayer finished
+    }
+
+    const savedDetails = room.activeMatchDetails;
+    delete room.activeMatchDetails;
+    delete room.shootout;
+
+    // Emit match_simulated to show final simulation stats and trigger client review
+    io.to(room.roomId).emit('match_simulated', {
+      matchDetails: savedDetails,
+      roomState: getSanitizedRoom(room)
+    });
+  } else {
+    // Progress to next kick
+    if (shootout.kicksA === shootout.kicksB) {
+      shootout.round++;
+      if (shootout.round > 5) {
+        shootout.suddenDeath = true;
+      }
+      shootout.strikerId = p1.id;
+      shootout.keeperId = room.isSinglePlayer ? 'ai' : p2.id;
+    } else {
+      shootout.strikerId = room.isSinglePlayer ? 'ai' : p2.id;
+      shootout.keeperId = p1.id;
+    }
+
+    io.to(room.roomId).emit('room_update', getSanitizedRoom(room));
+  }
 }
 
 server.listen(PORT, () => {
