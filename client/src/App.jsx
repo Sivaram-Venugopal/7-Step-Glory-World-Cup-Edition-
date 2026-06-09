@@ -1522,6 +1522,44 @@ export default function App() {
     );
   };
 
+  const renderOpponentLeftModal = () => {
+    if (!room || room.isSinglePlayer || room.status === 'lobby' || room.players.length >= 2) return null;
+    return (
+      <div className="retro-popup-overlay" style={{
+        position: 'fixed',
+        top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.85)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 99999,
+        padding: '20px'
+      }}>
+        <div className="exit-confirm-panel text-center" style={{ borderColor: '#c0392b' }}>
+          <div className="flex justify-center" style={{ color: '#c0392b' }}>
+            <AlertCircle size={36} className="animate-bounce" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="logo-heading" style={{ fontSize: '1.25rem', color: '#c0392b' }}>
+              OPPONENT LEFT
+            </h3>
+            <p className="text-xs" style={{ color: 'var(--color-text-dim)', lineHeight: '1.3' }}>
+              The other player has disconnected or left the game. Please return to the main menu.
+            </p>
+          </div>
+          <button 
+            onClick={handleLeaveRoom}
+            className="btn-sports w-full"
+            style={{ fontSize: '0.72rem', padding: '8px', background: '#c0392b', color: '#ffffff', border: 'none', marginTop: '12px' }}
+          >
+            Exit to Main Menu
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+
   if (introState !== 'done') {
     return (
       <div className={`intro-overlay ${introState === 'fading' ? 'fade-out' : ''}`}>
@@ -2080,6 +2118,7 @@ export default function App() {
       </div>
       {renderExitConfirmModal()}
       {renderTimeoutPopupModal()}
+      {renderOpponentLeftModal()}
       </>
     );
   }
@@ -2385,6 +2424,7 @@ export default function App() {
       </div>
       {renderExitConfirmModal()}
       {renderTimeoutPopupModal()}
+      {renderOpponentLeftModal()}
       </>
     );
   }
@@ -2393,14 +2433,14 @@ export default function App() {
   if (room.status === 'tournament' || room.status === 'finished') {
     const user = room.players.find(p => p.id === socket?.id) || room.players[0];
     const opponent = !room.isSinglePlayer 
-      ? (room.players.find(p => p.id !== socket?.id) || room.players[1]) 
+      ? (room.players.find(p => p.id !== socket?.id) || room.players[1] || { name: "Disconnected", stats: { totalOvr: 0, att: 0, mid: 0, def: 0 }, squad: {} }) 
       : (room.currentOpponent || { name: "AI Opponent", stats: { totalOvr: 60, att: 60, mid: 60, def: 60 } });
     
     const hasFinished = room.status === 'finished';
+    const lastMatch = room.matchesHistory[room.matchesHistory.length - 1];
     const isP1 = lastMatch && lastMatch.playerAName 
       ? lastMatch.playerAName === user.name 
       : room.players[0]?.id === socket?.id;
-    const lastMatch = room.matchesHistory[room.matchesHistory.length - 1];
     const wonCup = hasFinished && (
       room.isSinglePlayer 
         ? (room.matchesPlayed >= 8 && lastMatch && lastMatch.scoreA > lastMatch.scoreB)
@@ -3173,6 +3213,7 @@ export default function App() {
       </div>
       {renderExitConfirmModal()}
       {renderTimeoutPopupModal()}
+      {renderOpponentLeftModal()}
       {screenLoading && (
         <div className="screen-transition-overlay">
           <div className="screen-transition-content">
