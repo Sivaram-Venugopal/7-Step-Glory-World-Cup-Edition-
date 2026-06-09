@@ -172,6 +172,7 @@ io.on('connection', (socket) => {
         subs: {}, // keys 0..2 (Bench substitutes)
         formation: "4-3-3",
         tactic: "tiki-taka",
+        playStyle: "balanced",
         stats: null,
         ready: false,
         draftedNames: [] // prevent duplicate draftings
@@ -194,6 +195,19 @@ io.on('connection', (socket) => {
       if (teamName) {
         player.teamName = teamName;
       }
+      io.to(roomId).emit('room_update', getSanitizedRoom(room));
+    }
+  });
+
+  // Play style modification
+  socket.on('update_play_style', ({ roomId, playStyle }) => {
+    const room = rooms[roomId];
+    if (!room) return;
+
+    const player = room.players.find(p => p.id === socket.id);
+    if (player) {
+      player.playStyle = playStyle;
+      player.stats = calculateTeamStats(player.squad, player.formation, player.tactic, player.manager, playStyle);
       io.to(roomId).emit('room_update', getSanitizedRoom(room));
     }
   });
@@ -254,7 +268,7 @@ io.on('connection', (socket) => {
         // Drafting finished
         room.players.forEach(p => {
           p.ready = false;
-          p.stats = calculateTeamStats(p.squad, p.formation, p.tactic, p.manager);
+          p.stats = calculateTeamStats(p.squad, p.formation, p.tactic, p.manager, p.playStyle || "balanced");
         });
 
         if (room.isSinglePlayer) {
@@ -282,7 +296,7 @@ io.on('connection', (socket) => {
       player.squad[starterIdx] = sub;
       player.subs[subIdx] = starter;
 
-      player.stats = calculateTeamStats(player.squad, player.formation, player.tactic, player.manager);
+      player.stats = calculateTeamStats(player.squad, player.formation, player.tactic, player.manager, player.playStyle || "balanced");
       io.to(roomId).emit('room_update', getSanitizedRoom(room));
     }
   });
@@ -295,7 +309,7 @@ io.on('connection', (socket) => {
     const player = room.players.find(p => p.id === socket.id);
     if (player) {
       player.tactic = tactic;
-      player.stats = calculateTeamStats(player.squad, player.formation, tactic, player.manager);
+      player.stats = calculateTeamStats(player.squad, player.formation, tactic, player.manager, player.playStyle || "balanced");
       io.to(roomId).emit('room_update', getSanitizedRoom(room));
     }
   });
@@ -406,8 +420,8 @@ io.on('connection', (socket) => {
             const remainingPlayer = room.players[0];
             const forfeitMatch = {
               matchNum: room.matchesPlayed + 1,
-              teamAName: remainingPlayer.teamName || remainingPlayer.name,
-              teamBName: leavingPlayer.teamName || leavingPlayer.name,
+              teamAName: `${remainingPlayer.name} (${remainingPlayer.teamName || 'Brazil'})`,
+              teamBName: `${leavingPlayer.name} (${leavingPlayer.teamName || 'Brazil'})`,
               scoreA: 3,
               scoreB: 0,
               events: [{ time: 90, type: 'whistle', text: `${leavingPlayer.name} has left the game. ${remainingPlayer.name} wins by default!` }]
@@ -468,8 +482,8 @@ io.on('connection', (socket) => {
       if (leavingPlayer && remainingPlayer) {
         const forfeitMatch = {
           matchNum: room.matchesPlayed + 1,
-          teamAName: remainingPlayer.teamName || remainingPlayer.name,
-          teamBName: leavingPlayer.teamName || leavingPlayer.name,
+          teamAName: `${remainingPlayer.name} (${remainingPlayer.teamName || 'Brazil'})`,
+          teamBName: `${leavingPlayer.name} (${leavingPlayer.teamName || 'Brazil'})`,
           teamAStats: { totalOvr: remainingPlayer.stats?.totalOvr || 75, tactic: remainingPlayer.tactic, formation: remainingPlayer.formation },
           teamBStats: { totalOvr: leavingPlayer.stats?.totalOvr || 75, tactic: leavingPlayer.tactic, formation: leavingPlayer.formation },
           scoreA: 3,
@@ -509,8 +523,8 @@ io.on('connection', (socket) => {
             const remainingPlayer = room.players[0];
             const forfeitMatch = {
               matchNum: room.matchesPlayed + 1,
-              teamAName: remainingPlayer.teamName || remainingPlayer.name,
-              teamBName: leavingPlayer.teamName || leavingPlayer.name,
+              teamAName: `${remainingPlayer.name} (${remainingPlayer.teamName || 'Brazil'})`,
+              teamBName: `${leavingPlayer.name} (${leavingPlayer.teamName || 'Brazil'})`,
               scoreA: 3,
               scoreB: 0,
               events: [{ time: 90, type: 'whistle', text: `${leavingPlayer.name} disconnected. ${remainingPlayer.name} wins by default!` }]
@@ -600,8 +614,8 @@ function setupMultiplayerOpponent(room) {
   const p1 = room.players[0];
   const p2 = room.players[1];
 
-  p1.stats = calculateTeamStats(p1.squad, p1.formation, p1.tactic, p1.manager);
-  p2.stats = calculateTeamStats(p2.squad, p2.formation, p2.tactic, p2.manager);
+  p1.stats = calculateTeamStats(p1.squad, p1.formation, p1.tactic, p1.manager, p1.playStyle || "balanced");
+  p2.stats = calculateTeamStats(p2.squad, p2.formation, p2.tactic, p2.manager, p2.playStyle || "balanced");
 
   io.to(room.roomId).emit('room_update', getSanitizedRoom(room));
 }
@@ -612,7 +626,7 @@ function simulateAndRecordMatch(room, standingA, standingB, isKnockout = false) 
 
   if (standingA.isUser) {
     const user = room.players[0];
-    squadA = { name: user.teamName || user.name, squad: user.squad, tactic: user.tactic, stats: user.stats };
+    squadA = { name: `${user.name} (${user.teamName || 'Brazil'})`, squad: user.squad, tactic: user.tactic, stats: user.stats };
   } else if (standingA.teamId) {
     squadA = generateAISquad(standingA.teamId);
   } else {
@@ -621,7 +635,7 @@ function simulateAndRecordMatch(room, standingA, standingB, isKnockout = false) 
 
   if (standingB.isUser) {
     const user = room.players[0];
-    squadB = { name: user.teamName || user.name, squad: user.squad, tactic: user.tactic, stats: user.stats };
+    squadB = { name: `${user.name} (${user.teamName || 'Brazil'})`, squad: user.squad, tactic: user.tactic, stats: user.stats };
   } else if (standingB.teamId) {
     squadB = generateAISquad(standingB.teamId);
   } else {
@@ -709,7 +723,7 @@ function simulateRound(room) {
       // Knockout Phase (Matches 4 to 8)
       // Simulate user's match with knockout penalties enabled
       matchRes = simulateMatch(
-        { name: user.teamName || user.name, squad: user.squad, tactic: user.tactic, stats: user.stats },
+        { name: `${user.name} (${user.teamName || 'Brazil'})`, squad: user.squad, tactic: user.tactic, stats: user.stats },
         { name: opponent.name, squad: opponent.squad, tactic: opponent.tactic, stats: opponent.stats },
         true,
         true // interactiveShootout
@@ -717,7 +731,7 @@ function simulateRound(room) {
 
       const matchDetails = {
         matchNum: room.matchesPlayed,
-        teamAName: user.teamName || user.name,
+        teamAName: `${user.name} (${user.teamName || 'Brazil'})`,
         teamBName: opponent.name,
         teamAStats: {
           totalOvr: user.stats?.totalOvr || 75,
@@ -750,14 +764,14 @@ function simulateRound(room) {
           suddenDeath: false,
           strikerId: user.id,
           keeperId: 'ai',
-          teamAName: user.teamName || user.name,
+          teamAName: `${user.name} (${user.teamName || 'Brazil'})`,
           teamBName: opponent.name,
           choices: {},
           events: [
             {
               time: 120,
               type: "whistle",
-              text: `🚨 PENALTY SHOOTOUT! The match must be decided from the spot! ${user.teamName || user.name} vs ${opponent.name}!`
+              text: `🚨 PENALTY SHOOTOUT! The match must be decided from the spot! ${user.name} (${user.teamName || 'Brazil'}) vs ${opponent.name}!`
             }
           ]
         };
@@ -812,16 +826,16 @@ function simulateRound(room) {
 
     // Simulate match with knockout rules enabled (shootout/extra time) to resolve a winner
     const matchRes = simulateMatch(
-      { name: p1.teamName || p1.name, squad: p1.squad, tactic: p1.tactic, stats: p1.stats },
-      { name: p2.teamName || p2.name, squad: p2.squad, tactic: p2.tactic, stats: p2.stats },
+      { name: `${p1.name} (${p1.teamName || 'Brazil'})`, squad: p1.squad, tactic: p1.tactic, stats: p1.stats },
+      { name: `${p2.name} (${p2.teamName || 'Brazil'})`, squad: p2.squad, tactic: p2.tactic, stats: p2.stats },
       true,
       true // interactiveShootout
     );
 
     const matchDetails = {
       matchNum: 1,
-      teamAName: p1.teamName || p1.name,
-      teamBName: p2.teamName || p2.name,
+      teamAName: `${p1.name} (${p1.teamName || 'Brazil'})`,
+      teamBName: `${p2.name} (${p2.teamName || 'Brazil'})`,
       playerAName: p1.name,
       playerBName: p2.name,
       teamAStats: {
@@ -855,14 +869,14 @@ function simulateRound(room) {
         suddenDeath: false,
         strikerId: p1.id,
         keeperId: p2.id,
-        teamAName: p1.teamName || p1.name,
-        teamBName: p2.teamName || p2.name,
+        teamAName: `${p1.name} (${p1.teamName || 'Brazil'})`,
+        teamBName: `${p2.name} (${p2.teamName || 'Brazil'})`,
         choices: {},
         events: [
           {
             time: 120,
             type: "whistle",
-            text: `🚨 PENALTY SHOOTOUT! The match must be decided from the spot! ${p1.teamName || p1.name} vs ${p2.teamName || p2.name}!`
+            text: `🚨 PENALTY SHOOTOUT! The match must be decided from the spot! ${p1.name} (${p1.teamName || 'Brazil'}) vs ${p2.name} (${p2.teamName || 'Brazil'})!`
           }
         ]
       };
@@ -1014,7 +1028,8 @@ function getSanitizedRoom(room) {
       stats: p.stats,
       ready: p.ready,
       draftedNames: p.draftedNames,
-      spunTeams: p.spunTeams
+      spunTeams: p.spunTeams,
+      playStyle: p.playStyle || "balanced"
     })),
     shootout: room.shootout ? {
       kicksA: room.shootout.kicksA,

@@ -360,10 +360,17 @@ export default function App() {
   const [shootoutState, setShootoutState] = useState(null); // 'shoot' | 'save' | null
   const [shootoutEvent, setShootoutEvent] = useState(null);
   const [prevShootoutEventsLength, setPrevShootoutEventsLength] = useState(0);
+  const startingTournamentRef = useRef(false);
 
   const handleInteractiveShootoutChoice = (spotIdx) => {
     if (!room || !socket) return;
     socket.emit('submit_shootout_choice', { roomId: room.roomId, choice: spotIdx });
+  };
+
+  const handleUpdatePlayStyle = (playStyle) => {
+    if (socket && room) {
+      socket.emit('update_play_style', { roomId: room.roomId, playStyle });
+    }
   };
 
   const handleShootoutChoice = (spotIdx) => {
@@ -678,6 +685,9 @@ export default function App() {
   };
 
   const startSupabaseTournament = async (roomState) => {
+    const localId = 'local-' + Math.random().toString(36).substring(2, 9);
+    setSupabaseTournamentId(localId);
+
     if (!supabase || !user) return;
 
     try {
@@ -723,6 +733,48 @@ export default function App() {
       }
     }
 
+    // Always log to local storage match history as fallback/record
+    try {
+      const localHistory = JSON.parse(localStorage.getItem('local_match_history') || '[]');
+      const userPlayer = roomState.players.find(p => p.id === socket?.id) || roomState.players[0];
+      // Create a record matching the tournament database structure
+      const newMatchRecord = {
+        id: supabaseTournamentId || 'local-' + Date.now(),
+        user_team: userPlayer?.teamName || "Brazil",
+        type: roomState.isSinglePlayer ? 'AI' : 'Friend',
+        stages_played: matchDetails.matchNum,
+        won_cup: wonCup,
+        created_at: new Date().toISOString(),
+        tournament_matches: [{
+          match_num: matchDetails.matchNum,
+          team_a_name: matchDetails.teamAName,
+          team_b_name: matchDetails.teamBName,
+          score_a: matchDetails.scoreA,
+          score_b: matchDetails.scoreB
+        }]
+      };
+
+      // Check if we should append to an existing tournament in local history or add new
+      const existingTourneyIdx = localHistory.findIndex(t => t.id === supabaseTournamentId);
+      if (existingTourneyIdx !== -1 && supabaseTournamentId) {
+        localHistory[existingTourneyIdx].stages_played = matchDetails.matchNum;
+        localHistory[existingTourneyIdx].won_cup = wonCup;
+        if (!localHistory[existingTourneyIdx].tournament_matches) {
+          localHistory[existingTourneyIdx].tournament_matches = [];
+        }
+        // Avoid duplicate matches in same tourney
+        const hasMatch = localHistory[existingTourneyIdx].tournament_matches.some(m => m.match_num === matchDetails.matchNum);
+        if (!hasMatch) {
+          localHistory[existingTourneyIdx].tournament_matches.push(newMatchRecord.tournament_matches[0]);
+        }
+      } else {
+        localHistory.push(newMatchRecord);
+      }
+      localStorage.setItem('local_match_history', JSON.stringify(localHistory));
+    } catch (e) {
+      console.warn("Local match history error:", e);
+    }
+
     if (!supabase || !user || !supabaseTournamentId) return;
 
     try {
@@ -755,7 +807,17 @@ export default function App() {
   };
 
   const loadTournamentHistory = async () => {
-    if (!supabase || !user) return;
+    let localHistory = [];
+    try {
+      localHistory = JSON.parse(localStorage.getItem('local_match_history') || '[]');
+    } catch (e) {
+      console.warn("Error reading local match history:", e);
+    }
+
+    if (!supabase || !user) {
+      setHistoricalRuns(localHistory.sort((a,b) => new Date(b.created_at) - new Date(a.created_at)));
+      return;
+    }
     setLoadingHistory(true);
     try {
       const { data, error } = await supabase
@@ -779,9 +841,20 @@ export default function App() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setHistoricalRuns(data);
+
+      // Merge local history and Supabase history, deduplicating by ID
+      const merged = [...data];
+      localHistory.forEach(localRun => {
+        if (!merged.some(dbRun => dbRun.id === localRun.id)) {
+          merged.push(localRun);
+        }
+      });
+      // Sort merged history by created_at desc
+      merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      setHistoricalRuns(merged);
     } catch (err) {
       console.error("Error loading tournament history:", err.message);
+      setHistoricalRuns(localHistory.sort((a,b) => new Date(b.created_at) - new Date(a.created_at)));
     } finally {
       setLoadingHistory(false);
     }
@@ -878,9 +951,13 @@ export default function App() {
 
       // Initialize Supabase tournament record if starting tournament (both players do it for their own profiles)
       if (roomState.status === 'tournament' && roomState.matchesPlayed === 0) {
-        if (!supabaseTournamentId) {
+        if (!supabaseTournamentId && !startingTournamentRef.current) {
+          startingTournamentRef.current = true;
           startSupabaseTournament(roomState);
         }
+      } else if (roomState.status === 'lobby') {
+        startingTournamentRef.current = false;
+        setSupabaseTournamentId(null);
       }
     });
 
@@ -1132,6 +1209,7 @@ export default function App() {
     setSimulationActive(false);
     setSimDetails(null);
     setSupabaseTournamentId(null);
+    startingTournamentRef.current = false;
     setLandingSubmenu("MAIN");
   };
 
@@ -1365,7 +1443,7 @@ export default function App() {
         }
       }
     } else if (room.status === 'tournament') {
-      const player = user.squad[idx];
+      const player = localPlayer?.squad[idx];
       if (!selectedSwapSlot) {
         if (player) setSelectedSwapSlot({ type: 'squad', index: idx });
       } else if (selectedSwapSlot.type === 'squad') {
@@ -1376,6 +1454,11 @@ export default function App() {
         }
       } else if (selectedSwapSlot.type === 'sub') {
         // Swap sub to squad in tournament
+        const subPlayer = localPlayer?.subs[selectedSwapSlot.index];
+        const slotLabel = getPositionLabel(localPlayer.formation, idx);
+        if (subPlayer && !isPositionCompatible(subPlayer.position, slotLabel)) {
+          return; // Not compatible
+        }
         socket.emit('swap_player', { roomId, starterIdx: idx, subIdx: selectedSwapSlot.index });
         setSelectedSwapSlot(null);
       }
@@ -1422,7 +1505,7 @@ export default function App() {
         }
       }
     } else if (room.status === 'tournament') {
-      const player = user.subs[subIdx];
+      const player = localPlayer?.subs[subIdx];
       if (!selectedSwapSlot) {
         if (player) setSelectedSwapSlot({ type: 'sub', index: subIdx });
       } else if (selectedSwapSlot.type === 'sub') {
@@ -1433,6 +1516,13 @@ export default function App() {
         }
       } else if (selectedSwapSlot.type === 'squad') {
         // Swap squad to sub in tournament
+        const subPlayer = localPlayer?.subs[subIdx];
+        if (subPlayer) {
+          const slotLabel = getPositionLabel(localPlayer.formation, selectedSwapSlot.index);
+          if (!isPositionCompatible(subPlayer.position, slotLabel)) {
+            return; // Not compatible
+          }
+        }
         socket.emit('swap_player', { roomId, starterIdx: selectedSwapSlot.index, subIdx });
         setSelectedSwapSlot(null);
       }
@@ -1456,6 +1546,8 @@ export default function App() {
     setSimulationActive(false);
     setSimDetails(null);
     setDraftData(null);
+    setSupabaseTournamentId(null);
+    startingTournamentRef.current = false;
     socket.emit('restart_game', { roomId });
   };
 
@@ -2108,6 +2200,19 @@ export default function App() {
                   </select>
                 </div>
                 <div>
+                  <label className="block text-xs mb-2 uppercase font-semibold">Play Style</label>
+                  <select 
+                    value={localPlayer.playStyle || "balanced"} 
+                    onChange={e => handleUpdatePlayStyle(e.target.value)}
+                    className="sports-input"
+                  >
+                    <option value="balanced">Balanced</option>
+                    <option value="attack">Attack (+3 ATT / -2 DEF)</option>
+                    <option value="defense">Defense (+3 DEF / -2 ATT)</option>
+                    <option value="control">Midfield Control (+2 MID)</option>
+                  </select>
+                </div>
+                <div>
                   <label className="block text-xs mb-2 uppercase font-semibold">Select Country</label>
                   <select 
                     value={localPlayer.teamName || "Brazil"} 
@@ -2576,7 +2681,7 @@ export default function App() {
           <button onClick={() => setActiveDashboardTab("SCOUTING")} className={`tab-btn ${activeDashboardTab === "SCOUTING" ? 'active' : ''}`}>Squad Scouting</button>
           {room.isSinglePlayer && <button onClick={() => setActiveDashboardTab("STANDINGS")} className={`tab-btn ${activeDashboardTab === "STANDINGS" ? 'active' : ''}`}>All Groups Standings</button>}
           <button onClick={() => setActiveDashboardTab("STATS")} className={`tab-btn ${activeDashboardTab === "STATS" ? 'active' : ''}`}>Leaderboards</button>
-          {user && <button onClick={() => setActiveDashboardTab("HISTORY")} className={`tab-btn ${activeDashboardTab === "HISTORY" ? 'active' : ''}`}>🏆 Tournament History</button>}
+          {user && <button onClick={() => setActiveDashboardTab("HISTORY")} className={`tab-btn ${activeDashboardTab === "HISTORY" ? 'active' : ''}`}>🏆 {room.isSinglePlayer ? "Tournament History" : "Match History"}</button>}
         </div>
 
         {/* --- TAB 1: SQUAD SCOUTING & CONTROLS --- */}
@@ -2594,18 +2699,35 @@ export default function App() {
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs mb-2 uppercase font-semibold">Tactic Style</label>
-                <select 
-                  value={user.tactic} 
-                  onChange={e => handleUpdateTactic(e.target.value)}
-                  className="sports-input"
-                  disabled={simulationActive}
-                >
-                  {Object.keys(TACTIC_DETAILS).map(tacKey => (
-                    <option key={tacKey} value={tacKey}>{TACTIC_DETAILS[tacKey].name}</option>
-                  ))}
-                </select>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '1rem' }}>
+                <div>
+                  <label className="block text-xs mb-2 uppercase font-semibold">Tactic Style</label>
+                  <select 
+                    value={user.tactic} 
+                    onChange={e => handleUpdateTactic(e.target.value)}
+                    className="sports-input"
+                    disabled={simulationActive}
+                  >
+                    {Object.keys(TACTIC_DETAILS).map(tacKey => (
+                      <option key={tacKey} value={tacKey}>{TACTIC_DETAILS[tacKey].name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs mb-2 uppercase font-semibold">Play Style</label>
+                  <select 
+                    value={localPlayer?.playStyle || "balanced"} 
+                    onChange={e => handleUpdatePlayStyle(e.target.value)}
+                    className="sports-input"
+                    disabled={simulationActive}
+                  >
+                    <option value="balanced">Balanced</option>
+                    <option value="attack">Attack (+3 ATT / -2 DEF)</option>
+                    <option value="defense">Defense (+3 DEF / -2 ATT)</option>
+                    <option value="control">Midfield Control (+2 MID)</option>
+                  </select>
+                </div>
               </div>
 
               <div className="tactic-info-card">
@@ -2909,11 +3031,11 @@ export default function App() {
           </div>
         )}
 
-        {/* --- TAB 4: TOURNAMENT HISTORY (SUPABASE CLOUD HISTORY) --- */}
+        {/* --- TAB 4: TOURNAMENT/MATCH HISTORY --- */}
         {activeDashboardTab === "HISTORY" && user && (
           <div className="dashboard-panel space-y-6">
             <h3 className="text-sm uppercase font-bold border-b pb-2 flex items-center gap-2" style={{ color: 'var(--color-gold)' }}>
-              <Award size={16} /> Cloud Campaign History Log
+              <Award size={16} /> {room.isSinglePlayer ? "Cloud Campaign History Log" : "Match History Log"}
             </h3>
 
             {loadingHistory ? (
