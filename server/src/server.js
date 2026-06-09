@@ -683,6 +683,66 @@ function simulateAndRecordMatch(room, standingA, standingB, isKnockout = false) 
   return res;
 }
 
+function processSuspensions(room, matchRes) {
+  if (!room.isSinglePlayer) return; // Only process for single player campaign
+  
+  const user = room.players[0];
+  if (!user) return;
+
+  // 1. Clear previous suspensions (any player currently marked as suspended has now served their suspension)
+  if (user.squad) {
+    Object.values(user.squad).forEach(p => {
+      if (p && p.suspended) {
+        p.suspended = false;
+      }
+    });
+  }
+  if (user.subs) {
+    user.subs.forEach(p => {
+      if (p && p.suspended) {
+        p.suspended = false;
+      }
+    });
+  }
+
+  // 2. Process new red cards from the match
+  if (!matchRes || !matchRes.redCards) return;
+
+  const userRedCardIds = matchRes.redCards.A || [];
+  if (userRedCardIds.length === 0) return;
+
+  userRedCardIds.forEach(cardId => {
+    if (!user.squad) return;
+    const squadEntries = Object.entries(user.squad);
+    const squadMatch = squadEntries.find(([idx, p]) => p && p.id === cardId);
+    
+    if (squadMatch) {
+      const [squadIdxStr, player] = squadMatch;
+      const squadIdx = parseInt(squadIdxStr);
+      
+      // Mark them as suspended
+      player.suspended = true;
+
+      // Find an eligible sub to replace them
+      if (!user.subs) user.subs = [];
+      let subIdx = user.subs.findIndex(p => p && p.position === player.position && !p.suspended);
+      if (subIdx === -1) {
+        subIdx = user.subs.findIndex(p => p && !p.suspended);
+      }
+
+      if (subIdx !== -1) {
+        // Swap starting player and sub player
+        const subPlayer = user.subs[subIdx];
+        user.squad[squadIdx] = subPlayer;
+        user.subs[subIdx] = player;
+      }
+    }
+  });
+
+  // Re-calculate team stats after replacement
+  user.stats = calculateTeamStats(user.squad, user.formation, user.tactic, user.manager);
+}
+
 // Resolve match simulation
 function simulateRound(room) {
   room.matchesPlayed++;
@@ -769,6 +829,7 @@ function simulateRound(room) {
 
       // Simulate user's match
       matchRes = simulateAndRecordMatch(room, userStanding, oppStanding, false);
+      processSuspensions(room, matchRes);
 
       // Simulate Group A other match
       const oppA2 = room.allGroupsStandings["A"].find(s => s.name !== userStanding.name && s.name !== oppStanding.name);
@@ -860,6 +921,7 @@ function simulateRound(room) {
         true,
         true // interactiveShootout
       );
+      processSuspensions(room, matchRes);
 
       const matchDetails = {
         matchNum: room.matchesPlayed,

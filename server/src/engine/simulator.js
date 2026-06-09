@@ -413,6 +413,9 @@ export function simulateMatch(teamA, teamB, isKnockout = false, interactiveShoot
     }
   }
 
+  const sentOffA = playerStatsA.filter(p => p.sentOff).map(p => p.id);
+  const sentOffB = playerStatsB.filter(p => p.sentOff).map(p => p.id);
+
   return {
     scoreA,
     scoreB,
@@ -420,7 +423,8 @@ export function simulateMatch(teamA, teamB, isKnockout = false, interactiveShoot
     needsShootout,
     scorers: scorersList,
     assists: assistsList,
-    cleanSheets: { A: cleanSheetGK_A, B: cleanSheetGK_B }
+    cleanSheets: { A: cleanSheetGK_A, B: cleanSheetGK_B },
+    redCards: { A: sentOffA, B: sentOffB }
   };
 }
 

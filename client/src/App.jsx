@@ -1143,19 +1143,21 @@ export default function App() {
     if (!supabase || !user || !supabaseTournamentId) return;
 
     try {
-      const { error: matchErr } = await supabase
-        .from('tournament_matches')
-        .insert({
-          tournament_id: supabaseTournamentId,
-          match_num: matchDetails.matchNum,
-          team_a_name: matchDetails.teamAName,
-          team_b_name: matchDetails.teamBName,
-          score_a: matchDetails.scoreA,
-          score_b: matchDetails.scoreB,
-          events: matchDetails.events
-        });
+      if (!roomState.isSinglePlayer) {
+        const { error: matchErr } = await supabase
+          .from('tournament_matches')
+          .insert({
+            tournament_id: supabaseTournamentId,
+            match_num: matchDetails.matchNum,
+            team_a_name: matchDetails.teamAName,
+            team_b_name: matchDetails.teamBName,
+            score_a: matchDetails.scoreA,
+            score_b: matchDetails.scoreB,
+            events: matchDetails.events
+          });
 
-      if (matchErr) throw matchErr;
+        if (matchErr) throw matchErr;
+      }
 
       const { error: tournErr } = await supabase
         .from('tournaments')
@@ -1852,6 +1854,12 @@ export default function App() {
       } else if (selectedSwapSlot.type === 'sub') {
         // Swap sub to squad in tournament
         const subPlayer = localPlayer?.subs[selectedSwapSlot.index];
+        if (subPlayer && subPlayer.suspended) {
+          setAlertMessage("THIS PLAYER IS SUSPENDED AND CANNOT BE SWAPPED IN!");
+          setTimeout(() => setAlertMessage(''), 2000);
+          setSelectedSwapSlot(null);
+          return;
+        }
         const slotLabel = getPositionLabel(localPlayer.formation, idx);
         if (subPlayer && !isPositionCompatible(subPlayer.position, slotLabel)) {
           return; // Not compatible
@@ -1903,6 +1911,11 @@ export default function App() {
       }
     } else if (room.status === 'tournament') {
       const player = localPlayer?.subs[subIdx];
+      if (player && player.suspended) {
+        setAlertMessage("THIS PLAYER IS SUSPENDED AND CANNOT BE SWAPPED IN!");
+        setTimeout(() => setAlertMessage(''), 2000);
+        return;
+      }
       if (!selectedSwapSlot) {
         if (player) setSelectedSwapSlot({ type: 'sub', index: subIdx });
       } else if (selectedSwapSlot.type === 'sub') {
@@ -1914,6 +1927,12 @@ export default function App() {
       } else if (selectedSwapSlot.type === 'squad') {
         // Swap squad to sub in tournament
         const subPlayer = localPlayer?.subs[subIdx];
+        if (subPlayer && subPlayer.suspended) {
+          setAlertMessage("THIS PLAYER IS SUSPENDED AND CANNOT BE SWAPPED IN!");
+          setTimeout(() => setAlertMessage(''), 2000);
+          setSelectedSwapSlot(null);
+          return;
+        }
         if (subPlayer) {
           const slotLabel = getPositionLabel(localPlayer.formation, selectedSwapSlot.index);
           if (!isPositionCompatible(subPlayer.position, slotLabel)) {
@@ -2711,7 +2730,7 @@ export default function App() {
                         {p.teamName && (
                           <span className="lobby-manager-team">[{p.teamName}]</span>
                         )}
-                        {p.isHost && (
+                        {p.isHost && !room.isSinglePlayer && (
                           <span className="lobby-manager-host-badge">HOST</span>
                         )}
                       </div>
@@ -3191,7 +3210,7 @@ export default function App() {
                 }
               </h2>
               <p className="text-xs font-bold" style={{ color: 'var(--color-gold)', marginTop: '4px' }}>
-                {hasFinished ? (wonCup ? (room.isSinglePlayer ? "YOU CLAIMED SUPREME GLORY!" : "YOU WON THE DUEL!") : "YOU LOST THE DUEL") : (
+                {hasFinished ? (wonCup ? (room.isSinglePlayer ? "YOU CLAIMED SUPREME GLORY!" : "YOU WON THE DUEL!") : (room.isSinglePlayer ? "END OF TOURNAMENT" : "YOU LOST THE DUEL")) : (
                   room.isSinglePlayer && room.aiMode !== 'single' ? (
                     room.matchesPlayed < 3 
                       ? `GROUP STAGE MATCH - GROUP A`
@@ -3427,6 +3446,11 @@ export default function App() {
                             <div className="font-bold mt-1" style={{ color: 'var(--color-gold)', fontSize: '0.6rem' }}>
                               {player.name.split(' ').pop()}
                             </div>
+                            {player.suspended && (
+                              <div className="text-[8px] bg-red-600 text-white px-1 py-0.5 rounded font-extrabold mt-1">
+                                SUSPENDED
+                              </div>
+                            )}
                           </>
                         ) : (
                           <>
@@ -3648,13 +3672,15 @@ export default function App() {
                           <span className="text-xs font-extrabold" style={{ color: run.won_cup ? 'var(--color-gold)' : run.is_terminated ? '#c0392b' : 'var(--color-white)' }}>
                             {getStageLabel(run.stages_played, run.won_cup, run.is_terminated)}
                           </span>
-                          <button 
-                            onClick={() => setExpandedRunId(isExpanded ? null : run.id)}
-                            className="btn-sports-secondary"
-                            style={{ padding: '6px 12px', fontSize: '0.68rem' }}
-                          >
-                            {isExpanded ? 'Hide Details' : 'View Matches'}
-                          </button>
+                          {run.tournament_matches && run.tournament_matches.length > 0 && (
+                            <button 
+                              onClick={() => setExpandedRunId(isExpanded ? null : run.id)}
+                              className="btn-sports-secondary"
+                              style={{ padding: '6px 12px', fontSize: '0.68rem' }}
+                            >
+                              {isExpanded ? 'Hide Details' : 'View Matches'}
+                            </button>
+                          )}
                         </div>
                       </div>
 
