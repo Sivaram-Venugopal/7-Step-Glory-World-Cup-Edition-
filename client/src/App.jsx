@@ -382,96 +382,49 @@ function ovClass(o) {
   return 'ov-low';
 }
 
-const ConfettiCelebration = () => {
-  const canvasRef = useRef(null);
+const calculateChemistry = (playerObj) => {
+  if (!playerObj || !playerObj.squad) return 0;
+  const squadPlayers = Object.values(playerObj.squad).filter(Boolean);
+  if (squadPlayers.length === 0) return 0;
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+  let chemistry = 30; // base chemistry
 
-    const ctx = canvas.getContext('2d');
-    let animationFrameId;
-
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-
-    const colors = ['#f1c40f', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6', '#e67e22', '#1abc9c'];
-    const particles = [];
-
-    for (let i = 0; i < 150; i++) {
-      particles.push({
-        x: Math.random() * canvas.width,
-        y: Math.random() * canvas.height - canvas.height,
-        r: Math.random() * 6 + 4,
-        d: Math.random() * canvas.height,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        tilt: Math.random() * 10 - 5,
-        tiltAngleIncremental: Math.random() * 0.07 + 0.02,
-        tiltAngle: 0
-      });
+  // 1. Decade Links
+  const decades = squadPlayers.map(p => {
+    if (!p.teamId) return null;
+    const match = p.teamId.match(/\d{4}/);
+    if (match) {
+      const year = parseInt(match[0]);
+      return Math.floor(year / 10) * 10;
     }
+    return null;
+  }).filter(Boolean);
 
-    const draw = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const decadeCounts = {};
+  decades.forEach(d => { decadeCounts[d] = (decadeCounts[d] || 0) + 1; });
+  
+  let maxDecadeCount = 0;
+  Object.values(decadeCounts).forEach(c => { if (c > maxDecadeCount) maxDecadeCount = c; });
 
-      particles.forEach((p, idx) => {
-        p.tiltAngle += p.tiltAngleIncremental;
-        p.y += (Math.cos(p.d) + 3 + p.r / 2) / 2;
-        p.x += Math.sin(p.tiltAngle);
-        p.tilt = Math.sin(p.tiltAngle - idx / 3) * 15;
+  if (maxDecadeCount >= 3) chemistry += 15;
+  if (maxDecadeCount >= 5) chemistry += 20;
 
-        ctx.beginPath();
-        ctx.lineWidth = p.r;
-        ctx.strokeStyle = p.color;
-        ctx.moveTo(p.x + p.tilt + p.r / 2, p.y);
-        ctx.lineTo(p.x + p.tilt, p.y + p.tilt + p.r / 2);
-        ctx.stroke();
+  // 2. Nation Links
+  const nations = squadPlayers.map(p => {
+    if (!p.teamId) return null;
+    return p.teamId.split('_')[0];
+  }).filter(Boolean);
 
-        if (p.y > canvas.height) {
-          particles[idx] = {
-            x: Math.random() * canvas.width,
-            y: -20,
-            r: p.r,
-            d: p.d,
-            color: p.color,
-            tilt: p.tilt,
-            tiltAngleIncremental: p.tiltAngleIncremental,
-            tiltAngle: p.tiltAngle
-          };
-        }
-      });
+  const nationCounts = {};
+  nations.forEach(n => { nationCounts[n] = (nationCounts[n] || 0) + 1; });
 
-      animationFrameId = requestAnimationFrame(draw);
-    };
+  let maxNationCount = 0;
+  Object.values(nationCounts).forEach(c => { if (c > maxNationCount) maxNationCount = c; });
 
-    draw();
+  if (maxNationCount >= 3) chemistry += 10;
+  if (maxNationCount >= 5) chemistry += 10;
 
-    const handleResize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    };
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-      window.removeEventListener('resize', handleResize);
-    };
-  }, []);
-
-  return (
-    <canvas 
-      ref={canvasRef} 
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100vw',
-        height: '100vh',
-        pointerEvents: 'none',
-        zIndex: 999999
-      }}
-    />
-  );
+  return Math.min(100, chemistry);
 };
 
 export default function App() {
@@ -533,6 +486,13 @@ export default function App() {
   const [visibleEvents, setVisibleEvents] = useState([]);
   const [eventIndex, setEventIndex] = useState(0);
   const eventListEndRef = useRef(null);
+
+  // Live Match Coaching States
+  const [liveTactic, setLiveTactic] = useState('balanced');
+  const [isSimPaused, setIsSimPaused] = useState(false);
+  const [showLiveSubModal, setShowLiveSubModal] = useState(false);
+  const [selectedLiveStarter, setSelectedLiveStarter] = useState(null);
+  const [selectedLiveSub, setSelectedLiveSub] = useState(null);
 
   // Live Field & Interactive Shootout
   const [ballPos, setBallPos] = useState({ x: '50%', y: '50%' });
@@ -1405,6 +1365,62 @@ export default function App() {
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.04);
         osc.start();
         osc.stop(ctx.currentTime + 0.05);
+      } else if (type === 'crowd_cheer') {
+        const bufferSize = ctx.sampleRate * 2.0;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        const noise = ctx.createBufferSource();
+        noise.buffer = buffer;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(400, ctx.currentTime);
+        filter.Q.setValueAtTime(1.0, ctx.currentTime);
+        const filterGain = ctx.createGain();
+        filterGain.gain.setValueAtTime(0.0, ctx.currentTime);
+        filterGain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 0.2);
+        filterGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.8);
+        noise.connect(filter);
+        filter.connect(filterGain);
+        filterGain.connect(ctx.destination);
+        noise.start();
+        noise.stop(ctx.currentTime + 2.0);
+      } else if (type === 'victory_fanfare') {
+        const playNote = (freq, start, duration, oscType='triangle') => {
+          const oscNode = ctx.createOscillator();
+          const gainNode = ctx.createGain();
+          oscNode.type = oscType;
+          oscNode.frequency.setValueAtTime(freq, ctx.currentTime + start);
+          gainNode.gain.setValueAtTime(0.0, ctx.currentTime + start);
+          gainNode.gain.linearRampToValueAtTime(0.12, ctx.currentTime + start + 0.05);
+          gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration);
+          oscNode.connect(gainNode);
+          gainNode.connect(ctx.destination);
+          oscNode.start(ctx.currentTime + start);
+          oscNode.stop(ctx.currentTime + start + duration);
+        };
+        playNote(261.63, 0.0, 0.25);
+        playNote(329.63, 0.25, 0.25);
+        playNote(392.00, 0.5, 0.25);
+        playNote(523.25, 0.75, 0.80, 'sawtooth');
+        playSound('crowd_cheer');
+      } else if (type === 'stadium_announcement') {
+        const playChime = (freq, start) => {
+          const oscNode = ctx.createOscillator();
+          const gainNode = ctx.createGain();
+          oscNode.type = 'sine';
+          oscNode.frequency.setValueAtTime(freq, ctx.currentTime + start);
+          gainNode.gain.setValueAtTime(0.08, ctx.currentTime + start);
+          gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + 0.6);
+          oscNode.connect(gainNode);
+          gainNode.connect(ctx.destination);
+          oscNode.start(ctx.currentTime + start);
+          oscNode.stop(ctx.currentTime + start + 0.7);
+        };
+        playChime(554.37, 0.0);
+        playChime(440.00, 0.20);
       }
     } catch (e) {
       console.warn("Audio Context blocked");
@@ -1489,6 +1505,14 @@ export default function App() {
       setShootoutEvent(null);
       setBallPos({ x: '50%', y: '50%' });
       playSound('whistle');
+      playSound('stadium_announcement');
+
+      // Reset live coaching states
+      setLiveTactic('balanced');
+      setIsSimPaused(false);
+      setShowLiveSubModal(false);
+      setSelectedLiveStarter(null);
+      setSelectedLiveSub(null);
 
       // Save match to Supabase for both players
       saveMatchToSupabase(matchDetails, roomState);
@@ -1563,7 +1587,7 @@ export default function App() {
 
   // Live simulation ticker scroll
   useEffect(() => {
-    if (!simulationActive || !simDetails || shootoutState) return;
+    if (!simulationActive || !simDetails || shootoutState || isSimPaused) return;
 
     if (eventIndex < simDetails.events.length) {
       const nextEv = simDetails.events[eventIndex];
@@ -1578,23 +1602,40 @@ export default function App() {
       }
 
       const timer = setTimeout(() => {
-        setVisibleEvents(prev => [...prev, nextEv]);
+        let modifiedEv = { ...nextEv };
+
+        // Live Tactic Modifiers (Dynamic In-Game Outcomes)
+        if (liveTactic === 'defense' && modifiedEv.type === 'goal' && modifiedEv.team !== 'A') {
+          // 35% chance to block/save the shot due to parking the bus
+          if (Math.random() < 0.35) {
+            modifiedEv.type = 'save';
+            modifiedEv.text = `🛡️ SHOUT [Park the Bus]: Solid defensive low-block blocks the attack! ${modifiedEv.text.split(' ').pop()}'s shot is blocked!`;
+          }
+        } else if (liveTactic === 'attack' && modifiedEv.type === 'save' && modifiedEv.team === 'A') {
+          // 25% chance to force a goal due to all out pressure
+          if (Math.random() < 0.25) {
+            modifiedEv.type = 'goal';
+            modifiedEv.text = `🔥 SHOUT [All Out Attack]: Relentless attacking pressure breaches their defense! ${modifiedEv.text.replace('saved', 'SCORED!')}`;
+          }
+        }
+
+        setVisibleEvents(prev => [...prev, modifiedEv]);
         setEventIndex(idx => idx + 1);
 
         // Update ball position and alerts based on event type
-        if (nextEv.type === 'whistle') {
+        if (modifiedEv.type === 'whistle') {
           setBallPos({ x: '50%', y: '50%' });
-          if (nextEv.text.includes('decided from the spot') || nextEv.text.includes('PENALTY SHOOTOUT')) {
+          if (modifiedEv.text.includes('decided from the spot') || modifiedEv.text.includes('PENALTY SHOOTOUT')) {
             setAlertMessage('PENALTIES!');
-          } else if (nextEv.text.includes('final whistle') || nextEv.text.includes('Finished')) {
+          } else if (modifiedEv.text.includes('final whistle') || modifiedEv.text.includes('Finished')) {
             setAlertMessage('FULL TIME!');
           } else {
             setAlertMessage('KICK OFF!');
           }
           setTimeout(() => setAlertMessage(''), 1500);
           playSound('whistle');
-        } else if (nextEv.type === 'goal') {
-          if (nextEv.team === 'A') {
+        } else if (modifiedEv.type === 'goal') {
+          if (modifiedEv.team === 'A') {
             setBallPos({ x: '92%', y: '50%' });
             setAlertMessage('GOAL FOR YOU!');
           } else {
@@ -1603,8 +1644,9 @@ export default function App() {
           }
           setTimeout(() => setAlertMessage(''), 1500);
           playSound('goal');
-        } else if (nextEv.type === 'save') {
-          if (nextEv.team === 'A') {
+          playSound('crowd_cheer');
+        } else if (modifiedEv.type === 'save') {
+          if (modifiedEv.team === 'A') {
             setBallPos({ x: '12%', y: `${35 + Math.random() * 30}%` });
             setAlertMessage('GREAT SAVE!');
           } else {
@@ -1613,8 +1655,8 @@ export default function App() {
           }
           setTimeout(() => setAlertMessage(''), 1500);
           playSound('kick');
-        } else if (nextEv.type === 'miss') {
-          if (nextEv.team === 'A') {
+        } else if (modifiedEv.type === 'miss') {
+          if (modifiedEv.team === 'A') {
             setBallPos({ x: '92%', y: `${20 + Math.random() * 60}%` });
           } else {
             setBallPos({ x: '8%', y: `${20 + Math.random() * 60}%` });
@@ -1622,27 +1664,35 @@ export default function App() {
           setAlertMessage('MISSED!');
           setTimeout(() => setAlertMessage(''), 1500);
           playSound('kick');
-        } else if (nextEv.type === 'yellow_card') {
+        } else if (modifiedEv.type === 'yellow_card') {
           setAlertMessage('YELLOW CARD!');
           setTimeout(() => setAlertMessage(''), 1500);
           playSound('card');
-        } else if (nextEv.type === 'red_card') {
+        } else if (modifiedEv.type === 'red_card') {
           setAlertMessage('RED CARD!');
           setTimeout(() => setAlertMessage(''), 1500);
           playSound('card');
         } else {
-          const isA = nextEv.team === 'A';
+          const isA = modifiedEv.team === 'A';
           const rx = isA ? `${60 + Math.random() * 25}%` : `${15 + Math.random() * 25}%`;
           const ry = `${20 + Math.random() * 60}%`;
           setBallPos({ x: rx, y: ry });
           playSound('kick');
         }
-      }, 2500);
+      }, 4500);
       return () => clearTimeout(timer);
     } else {
       setSimFinished(true);
+      // Play cool sounds on match completion
+      const isP1 = simDetails.playerAName ? simDetails.playerAName.includes(playerName || "Guest") : true;
+      const userWon = isP1 ? simDetails.scoreA > simDetails.scoreB : simDetails.scoreB > simDetails.scoreA;
+      if (userWon) {
+        playSound('victory_fanfare');
+      } else {
+        playSound('whistle');
+      }
     }
-  }, [simulationActive, eventIndex, simDetails, shootoutState, localPlayer]);
+  }, [simulationActive, eventIndex, simDetails, shootoutState, localPlayer, isSimPaused, liveTactic]);
 
   useEffect(() => {
     if (room && room.status === 'shootout' && room.shootout) {
@@ -2045,6 +2095,73 @@ export default function App() {
     socket.emit('ready_match', { roomId });
   };
 
+  const handleLiveTacticChange = (newTactic) => {
+    setLiveTactic(newTactic);
+    let tacKey = 'balanced';
+    if (newTactic === 'defense') tacKey = 'park-the-bus';
+    else if (newTactic === 'attack') tacKey = 'gegenpress';
+    else if (newTactic === 'counter') tacKey = 'counter-attack';
+    
+    if (room && socket) {
+      socket.emit('update_tournament_tactic', { roomId: room.roomId, tactic: tacKey });
+    }
+  };
+
+  const handleConfirmLiveSubstitution = () => {
+    if (selectedLiveStarter === null || selectedLiveSub === null || !localPlayer) return;
+
+    const oldPlayerName = localPlayer.squad[selectedLiveStarter].name;
+    const newPlayerName = localPlayer.subs[selectedLiveSub].name;
+
+    // Swap starting player and sub player in local state
+    const updatedSquad = { ...localPlayer.squad };
+    const updatedSubs = { ...localPlayer.subs };
+
+    const starterTemp = updatedSquad[selectedLiveStarter];
+    const subTemp = updatedSubs[selectedLiveSub];
+
+    updatedSquad[selectedLiveStarter] = subTemp;
+    updatedSubs[selectedLiveSub] = starterTemp;
+
+    const updatedLp = {
+      ...localPlayer,
+      squad: updatedSquad,
+      subs: updatedSubs
+    };
+
+    setLocalPlayer(updatedLp);
+
+    // Emit live player swap to the server
+    if (room && socket) {
+      socket.emit('swap_player', { roomId: room.roomId, starterIdx: selectedLiveStarter, subIdx: selectedLiveSub });
+    }
+
+    // Replace occurrences of old player name with new player name in all future simulation events
+    if (simDetails && simDetails.events) {
+      const updatedEvents = simDetails.events.map((ev, idx) => {
+        if (idx >= eventIndex) {
+          return {
+            ...ev,
+            text: ev.text.replace(new RegExp(oldPlayerName, 'g'), newPlayerName)
+                          .replace(new RegExp(oldPlayerName.split(' ').pop(), 'g'), newPlayerName.split(' ').pop())
+          };
+        }
+        return ev;
+      });
+
+      setSimDetails(prev => ({
+        ...prev,
+        events: updatedEvents
+      }));
+    }
+
+    // Clean up live sub modal states and resume simulation
+    setSelectedLiveStarter(null);
+    setSelectedLiveSub(null);
+    setShowLiveSubModal(false);
+    setIsSimPaused(false);
+  };
+
   const handleContinue = () => {
     setSimulationActive(false);
     setSimDetails(null);
@@ -2275,6 +2392,99 @@ export default function App() {
           >
             Exit to Main Menu
           </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderLiveSubModal = () => {
+    if (!showLiveSubModal || !localPlayer) return null;
+    return (
+      <div className="retro-popup-overlay" style={{
+        position: 'fixed',
+        top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.85)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 11000,
+        padding: '20px'
+      }}>
+        <div className="exit-confirm-panel max-w-lg space-y-4" style={{ background: '#0a0a0a', border: '2px solid var(--color-gold)', borderRadius: '8px', padding: '24px', width: '100%' }}>
+          <h3 className="logo-heading text-sm text-center" style={{ color: 'var(--color-gold)' }}>TACTICAL SUBSTITUTION</h3>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+            {/* Starting XI List */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold text-slate-400 uppercase border-b pb-1">Starting XI</h4>
+              <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
+                {getPlayerPositions(localPlayer.formation).map((pos, idx) => {
+                  const p = localPlayer.squad[idx];
+                  if (!p) return null;
+                  const isSelected = selectedLiveStarter === idx;
+                  return (
+                    <div 
+                      key={idx} 
+                      onClick={() => setSelectedLiveStarter(idx)}
+                      className={`p-2 rounded border text-[10px] cursor-pointer flex justify-between items-center ${isSelected ? 'border-amber-500 bg-amber-500/10' : 'border-white/10 bg-black/20'}`}
+                      style={isSelected ? { borderColor: 'var(--color-gold)', background: 'rgba(241,196,15,0.1)' } : {}}
+                    >
+                      <span style={{ color: isSelected ? 'var(--color-gold)' : '#fff' }}>{getPositionLabel(localPlayer.formation, idx)}: {p.name.split(' ').pop()}</span>
+                      <span className="font-bold text-amber-500" style={{ color: 'var(--color-gold)' }}>OVR {p.rating}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Substitutes Bench */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold text-slate-400 uppercase border-b pb-1">Bench (Subs)</h4>
+              <div className="space-y-1">
+                {Array.from({ length: 3 }).map((_, subIdx) => {
+                  const p = localPlayer.subs[subIdx];
+                  if (!p) return null;
+                  const isSelected = selectedLiveSub === subIdx;
+                  return (
+                    <div 
+                      key={subIdx}
+                      onClick={() => !p.suspended && setSelectedLiveSub(subIdx)}
+                      className={`p-2 rounded border text-[10px] cursor-pointer flex justify-between items-center ${p.suspended ? 'opacity-40 cursor-not-allowed border-red-500 bg-red-500/10' : isSelected ? 'border-amber-500 bg-amber-500/10' : 'border-white/10 bg-black/20'}`}
+                      style={isSelected ? { borderColor: 'var(--color-gold)', background: 'rgba(241,196,15,0.1)' } : {}}
+                    >
+                      <span style={{ color: isSelected ? 'var(--color-gold)' : '#fff' }}>SUB {subIdx + 1}: {p.name.split(' ').pop()}</span>
+                      <span className="font-bold text-amber-500" style={{ color: p.suspended ? '#e74c3c' : 'var(--color-gold)' }}>{p.suspended ? 'SUSP' : `OVR ${p.rating}`}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-2" style={{ display: 'flex', gap: '12px' }}>
+            <button 
+              onClick={handleConfirmLiveSubstitution}
+              disabled={selectedLiveStarter === null || selectedLiveSub === null}
+              className="btn-sports w-full bg-amber-600 border-none font-bold"
+              style={{ 
+                opacity: (selectedLiveStarter === null || selectedLiveSub === null) ? 0.5 : 1, 
+                cursor: (selectedLiveStarter === null || selectedLiveSub === null) ? 'not-allowed' : 'pointer',
+                background: 'var(--color-gold)',
+                color: '#000'
+              }}
+            >
+              Confirm Substitution
+            </button>
+            <button 
+              onClick={() => {
+                setShowLiveSubModal(false);
+                setIsSimPaused(false);
+              }}
+              className="btn-sports-secondary w-full"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -3285,7 +3495,6 @@ export default function App() {
 
     return (
       <>
-        {hasFinished && wonCup && <ConfettiCelebration />}
         <div className="max-w-6xl p-6 space-y-8">
           
           {/* Header Campaign Banner */}
@@ -3439,6 +3648,25 @@ export default function App() {
             {/* Pitch & substitutes view */}
             <div className="dashboard-panel flex flex-col gap-4">
               <h3 className="text-sm uppercase font-bold border-b pb-2 text-center">Active Starting XI</h3>
+              {localPlayer && (
+                <div className="p-3 bg-black/45 rounded border border-white/5 space-y-2 mb-2">
+                  <div className="flex justify-between items-center text-[10px]">
+                    <span className="font-bold text-slate-400">⚡ SQUAD CHEMISTRY:</span>
+                    <span className="font-extrabold text-amber-500" style={{ color: 'var(--color-gold)' }}>
+                      {calculateChemistry(localPlayer)}% {calculateChemistry(localPlayer) >= 60 ? "(+3 OVR Boost)" : ""}
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                    <div 
+                      className="bg-amber-500 h-full transition-all duration-500" 
+                      style={{ 
+                        width: `${calculateChemistry(localPlayer)}%`, 
+                        background: 'linear-gradient(90deg, #f1c40f, #e67e22)' 
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
               
               {selectedSwapSlot !== null && (
                 <div className="alert-box alert-box-amber text-xs">
@@ -3480,6 +3708,14 @@ export default function App() {
                           <span className="slot-name">
                             {player.name.split(' ').pop()}
                           </span>
+                          {/* Stamina bar */}
+                          <div style={{ display: 'flex', width: '32px', height: '3px', background: 'rgba(255,255,255,0.2)', borderRadius: '1.5px', marginTop: '2px', overflow: 'hidden' }}>
+                            <div style={{
+                              width: `${player.stamina !== undefined ? player.stamina : 100}%`,
+                              height: '100%',
+                              background: (player.stamina !== undefined ? player.stamina : 100) > 75 ? '#2ecc71' : (player.stamina !== undefined ? player.stamina : 100) > 40 ? '#f1c40f' : '#e74c3c'
+                            }} />
+                          </div>
                         </div>
                       ) : (
                         <div className="pitch-node-label">{getPositionLabel(user.formation, idx)}</div>
@@ -3538,6 +3774,14 @@ export default function App() {
                             </div>
                             <div className="font-bold mt-1" style={{ color: 'var(--color-gold)', fontSize: '0.6rem' }}>
                               {player.name.split(' ').pop()}
+                            </div>
+                            {/* Stamina bar */}
+                            <div style={{ display: 'flex', width: '32px', height: '3px', background: 'rgba(255,255,255,0.2)', borderRadius: '1.5px', marginTop: '2px', overflow: 'hidden' }}>
+                              <div style={{
+                                width: `${player.stamina !== undefined ? player.stamina : 100}%`,
+                                height: '100%',
+                                background: (player.stamina !== undefined ? player.stamina : 100) > 75 ? '#2ecc71' : (player.stamina !== undefined ? player.stamina : 100) > 40 ? '#f1c40f' : '#e74c3c'
+                              }} />
                             </div>
                             {player.suspended && (
                               <div className="text-[8px] bg-red-600 text-white px-1 py-0.5 rounded font-extrabold mt-1">
@@ -3843,6 +4087,22 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+                {/* Tactical Scouting tip */}
+                {opponent.tactic && (
+                  <div className="p-3 bg-slate-900/50 border border-slate-700/50 rounded-lg text-[10px] space-y-1 mt-2">
+                    <span className="font-bold text-amber-500 uppercase flex items-center gap-1">
+                      💡 Tactical Intel:
+                    </span>
+                    <p style={{ color: 'var(--color-text-dim)', lineHeight: '1.4' }}>
+                      {opponent.tactic === 'park-the-bus' && 'They will play extremely defensive. Use Tiki-Taka or All Out Attack to breach their defense.'}
+                      {opponent.tactic === 'gegenpress' && 'They will press aggressively. Use Long Ball to bypass their midfield or Wing Play to stretch them.'}
+                      {opponent.tactic === 'tiki-taka' && 'They control possession. Deploy Counter-Attack or Gegenpress to disrupt their passing rhythm.'}
+                      {opponent.tactic === 'counter-attack' && 'They wait for you to make mistakes. Use a Balanced style or Park the Bus to deny them space.'}
+                      {opponent.tactic === 'long-ball' && 'They play direct aerial football. Ensure your play style is set to Defense to solidify the low block.'}
+                      {opponent.tactic === 'wing-play' && 'They rely heavily on crosses from wide areas. Deploy Gegenpress or Park the Bus to block the wings.'}
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -3951,6 +4211,53 @@ export default function App() {
                   </p>
                 </div>
               </div>
+
+              {/* Live Coaching Console */}
+              {room.isSinglePlayer && !simFinished && (
+                <div className="bg-black/60 p-4 rounded-lg border border-white/10 flex flex-wrap justify-between items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-extrabold text-slate-400">TACTICAL SHOUTS:</span>
+                    <button 
+                      onClick={() => handleLiveTacticChange('balanced')} 
+                      className="btn-sports text-[9px] py-1.5 px-3 w-auto"
+                      style={liveTactic === 'balanced' ? { border: '1px solid var(--color-gold)', color: 'var(--color-gold)', background: 'rgba(241,196,15,0.1)' } : {}}
+                    >
+                      Balanced
+                    </button>
+                    <button 
+                      onClick={() => handleLiveTacticChange('defense')} 
+                      className="btn-sports text-[9px] py-1.5 px-3 w-auto"
+                      style={liveTactic === 'defense' ? { border: '1px solid var(--color-gold)', color: 'var(--color-gold)', background: 'rgba(241,196,15,0.1)' } : {}}
+                    >
+                      Park the Bus
+                    </button>
+                    <button 
+                      onClick={() => handleLiveTacticChange('attack')} 
+                      className="btn-sports text-[9px] py-1.5 px-3 w-auto"
+                      style={liveTactic === 'attack' ? { border: '1px solid var(--color-gold)', color: 'var(--color-gold)', background: 'rgba(241,196,15,0.1)' } : {}}
+                    >
+                      All Out Attack
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setIsSimPaused(prev => !prev)} 
+                      className="btn-sports text-[9px] py-1.5 px-3 w-auto bg-slate-800 hover:bg-slate-700 border-none font-bold"
+                    >
+                      {isSimPaused ? '▶ Resume' : '⏸ Pause'}
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setIsSimPaused(true);
+                        setShowLiveSubModal(true);
+                      }} 
+                      className="btn-sports text-[9px] py-1.5 px-3 w-auto bg-amber-600 hover:bg-amber-500 border-none font-bold text-white"
+                    >
+                      🔄 Make Substitution
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* 3D Field Visualizer */}
               <div className="sim-field-container">
@@ -4101,6 +4408,7 @@ export default function App() {
       {renderExitConfirmModal()}
       {renderTimeoutPopupModal()}
       {renderOpponentLeftModal()}
+      {renderLiveSubModal()}
       {screenLoading && (
         <div className="screen-transition-overlay">
           <div className="screen-transition-content">

@@ -743,6 +743,32 @@ function processSuspensions(room, matchRes) {
   user.stats = calculateTeamStats(user.squad, user.formation, user.tactic, user.manager);
 }
 
+// Helper: apply fatigue/stamina updates to players after a simulated match
+function applyFatigueToPlayers(room) {
+  if (!room.isSinglePlayer) return;
+  const user = room.players[0];
+  if (!user) return;
+
+  // 1. Decrease stamina for starting XI (squad)
+  for (let idx = 0; idx <= 10; idx++) {
+    const p = user.squad[idx];
+    if (p) {
+      p.stamina = Math.max(10, (p.stamina !== undefined ? p.stamina : 100) - 15);
+    }
+  }
+
+  // 2. Increase/restore stamina for substitute bench (subs)
+  for (let idx = 0; idx < 3; idx++) {
+    const p = user.subs[idx];
+    if (p) {
+      p.stamina = Math.min(100, (p.stamina !== undefined ? p.stamina : 100) + 30);
+    }
+  }
+
+  // 3. Re-calculate team stats
+  user.stats = calculateTeamStats(user.squad, user.formation, user.tactic, user.manager, user.playStyle || "balanced");
+}
+
 // Resolve match simulation
 function simulateRound(room) {
   room.matchesPlayed++;
@@ -810,6 +836,7 @@ function simulateRound(room) {
         io.to(room.roomId).emit('room_update', getSanitizedRoom(room));
       } else {
         // No shootout, finish match
+        applyFatigueToPlayers(room);
         updateStatsTracker(room, matchRes, user.squad, opponent.squad);
         room.status = 'finished';
         room.matchesHistory.push(matchDetails);
@@ -905,6 +932,7 @@ function simulateRound(room) {
         opponentStats: opponent.stats
       };
 
+      applyFatigueToPlayers(room);
       room.matchesHistory.push(matchDetails);
       room.players.forEach(p => { p.ready = false; });
 
@@ -1005,6 +1033,7 @@ function simulateRound(room) {
           }
         }
 
+        applyFatigueToPlayers(room);
         room.matchesHistory.push(matchDetails);
         room.players.forEach(p => { p.ready = false; });
         io.to(room.roomId).emit('match_simulated', {
@@ -1341,6 +1370,7 @@ function resolveShootoutKick(room) {
 
     // Transition to appropriate status
     if (room.isSinglePlayer) {
+      applyFatigueToPlayers(room);
       // Track stats for completed single player match (with shootout outcome)
       updateStatsTracker(room, room.activeMatchDetails, p1.squad, p2.squad);
 

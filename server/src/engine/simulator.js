@@ -149,6 +149,12 @@ export function calculateTeamStats(squad, formation, tactic, managerObj, playSty
       let naturalPos = p.position; // "GK", "DEF", "MID", "FWD"
       let rating = p.rating;
       
+      // Factor in stamina fatigue
+      if (p.stamina !== undefined) {
+        const fatigueFactor = p.stamina / 100;
+        rating = Math.round(rating * (0.8 + fatigueFactor * 0.20)); // stamina of 50 means rating drops by 10%
+      }
+      
       // Enforce position compatibility penalty
       if (naturalPos !== sector) {
         rating = Math.max(40, rating - 15);
@@ -172,19 +178,33 @@ export function calculateTeamStats(squad, formation, tactic, managerObj, playSty
   let mid = Math.round(avg(midRatings));
   let def = Math.round((avg(defRatings) * 2 + gkRating) / 3);
 
-  // Chemistry
-  const countryCounts = {};
+  // Chemistry based on Decades & Nations from teamId
+  const decadeCounts = {};
+  const nationCounts = {};
   for (let idx = 0; idx <= 10; idx++) {
     const p = squad[idx];
-    if (p) {
-      const origin = p.country || "Unknown";
-      countryCounts[origin] = (countryCounts[origin] || 0) + 1;
+    if (p && p.teamId) {
+      const match = p.teamId.match(/\d{4}/);
+      if (match) {
+        const year = parseInt(match[0]);
+        const decade = Math.floor(year / 10) * 10;
+        decadeCounts[decade] = (decadeCounts[decade] || 0) + 1;
+      }
+      const nation = p.teamId.split('_')[0];
+      if (nation) {
+        nationCounts[nation] = (nationCounts[nation] || 0) + 1;
+      }
     }
   }
 
-  let chemScore = 20;
-  Object.values(countryCounts).forEach(count => {
-    if (count > 1) chemScore += count * 8;
+  let chemScore = 30; // base chemistry
+  Object.values(decadeCounts).forEach(count => {
+    if (count >= 3) chemScore += 15;
+    if (count >= 5) chemScore += 20;
+  });
+  Object.values(nationCounts).forEach(count => {
+    if (count >= 3) chemScore += 10;
+    if (count >= 5) chemScore += 10;
   });
   const chemistry = Math.min(100, chemScore);
 
