@@ -2967,7 +2967,7 @@ export default function App() {
                 <div>
                   <p className="text-xs" style={{ color: 'var(--color-text-dim)' }}>Spun Nation</p>
                   <p className="font-extrabold text-white text-md">
-                    {localSpunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
+                    {(localSpunTeams[room.draftRound - 1]?.replace('_', ' ') || "").toUpperCase()}
                   </p>
                 </div>
                 <button 
@@ -2985,7 +2985,7 @@ export default function App() {
               <div className="matrix-spinner-reel">
                 {isSpinning 
                   ? "SCOUTING..." 
-                  : localSpunTeams[room.draftRound - 1]?.replace('_', ' ').toUpperCase()}
+                  : (localSpunTeams[room.draftRound - 1]?.replace('_', ' ') || "").toUpperCase()}
               </div>
               <button 
                 onClick={handleSpinWheel}
@@ -3258,8 +3258,8 @@ export default function App() {
   }
 
   // Render Tournament Dashboard & Statistics
-  if (room.status === 'tournament' || room.status === 'finished') {
-    const user = room.players.find(p => p.id === socket?.id) || room.players[0];
+  if (room.status === 'tournament' || room.status === 'finished' || room.status === 'shootout') {
+    const user = room.players.find(p => p.id === socket?.id) || room.players[0] || { name: playerName || "Manager", teamName: "Brazil", formation: "4-3-3", tactic: "tiki-taka", squad: {}, subs: {}, manager: null };
     const opponent = !room.isSinglePlayer 
       ? (room.players.find(p => p.id !== socket?.id) || room.players[1] || { name: "Disconnected", stats: { totalOvr: 0, att: 0, mid: 0, def: 0 }, squad: {} }) 
       : (room.currentOpponent || { name: "AI Opponent", stats: { totalOvr: 60, att: 60, mid: 60, def: 60 } });
